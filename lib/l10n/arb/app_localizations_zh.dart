@@ -5621,6 +5621,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get diveLog_legend_label_events => '事件';
 
   @override
+  String get diveLog_legend_label_computedEvents => 'Computed events';
+
+  @override
   String get diveLog_legend_label_gasDensity => '气体密度';
 
   @override

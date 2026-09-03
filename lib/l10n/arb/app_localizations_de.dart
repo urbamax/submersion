@@ -5915,6 +5915,9 @@ class AppLocalizationsDe extends AppLocalizations {
   String get diveLog_legend_label_events => 'Ereignisse';
 
   @override
+  String get diveLog_legend_label_computedEvents => 'Computed events';
+
+  @override
   String get diveLog_legend_label_gasDensity => 'Gasdichte';
 
   @override
