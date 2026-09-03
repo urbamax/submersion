@@ -33,6 +33,9 @@ set(LIBDC_SOURCES
     ${LIBDC_DIR}/src/suunto_d9_parser.c
     ${LIBDC_DIR}/src/suunto_eonsteel.c
     ${LIBDC_DIR}/src/suunto_eonsteel_parser.c
+    ${LIBDC_DIR}/src/suunto_nautic.c
+    ${LIBDC_DIR}/src/suunto_nautic_parser.c
+    ${LIBDC_DIR}/src/heatshrink/heatshrink_decoder.c
     ${LIBDC_DIR}/src/reefnet_sensus.c
     ${LIBDC_DIR}/src/reefnet_sensus_parser.c
     ${LIBDC_DIR}/src/reefnet_sensuspro.c

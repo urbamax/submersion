@@ -67,6 +67,7 @@ SOURCES=(
     suunto_vyper2.c
     suunto_d9.c suunto_d9_parser.c
     suunto_eonsteel.c suunto_eonsteel_parser.c
+    suunto_nautic.c suunto_nautic_parser.c heatshrink/heatshrink_decoder.c
     reefnet_sensus.c reefnet_sensus_parser.c
     reefnet_sensuspro.c reefnet_sensuspro_parser.c
     reefnet_sensusultra.c reefnet_sensusultra_parser.c
