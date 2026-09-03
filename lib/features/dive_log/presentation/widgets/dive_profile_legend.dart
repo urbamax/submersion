@@ -275,6 +275,14 @@ class DiveProfileLegend extends ConsumerWidget {
       onTap: notifier.toggleEvents,
     );
     add(
+      present: config.hasSplitEvents,
+      id: 'computedEvents',
+      label: l10n.diveLog_legend_label_computedEvents,
+      color: Colors.amber.shade200,
+      isActive: state.showComputedEvents,
+      onTap: notifier.toggleComputedEvents,
+    );
+    add(
       present: config.hasCeilingCurve,
       id: 'ceiling',
       label: l10n.diveLog_legend_label_ceiling,
