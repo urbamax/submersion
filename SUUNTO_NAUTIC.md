@@ -15,8 +15,13 @@ Tracking: <https://github.com/deepsealabs/libdc-swift/issues/29>
   (= Submersion's `submersion-patches` + the Nautic driver/parser from libdivecomputer#73
   + a CI/`<stdint.h>` fix, the event-mapping fix, and the `/Summary` cylinder-size decode)
 - the plugin's native build files list the new sources on every platform
+  (including the Android and MSVC project files, so all of `submersion-libdc`'s
+  CI matrix builds)
 - `libdc_download.c` carries water temperature forward between samples
   (the Nautic logs temp far less often than depth — without this the trace is gaps)
+- the watch serial is taken from the BLE advertised name (`Suunto Nautic <serial>`)
+  and saved on the dive-computer record — it is not in the dive data and the
+  driver reports no device info
 
 Everything else is stock upstream Submersion.
 
@@ -47,7 +52,10 @@ Then: **Import → dive computer → Bluetooth scan.** The watch advertises
 
 ## Known limitations
 
-- Serial number and firmware version aren't shown yet.
+- Firmware version isn't shown (it's only available from a live `GET /Info`
+  request the driver doesn't make yet). The watch serial is shown; the
+  tank-transmitter serial the Suunto app displays is not (its value is computed
+  by Suunto from a MAC stored in the `/Summary` and that conversion isn't known).
 - The app's own computed events (ascent rate, safety stop) can overlap the
   watch's own on the profile.
 - No signed/notarised binary — build it yourself.
