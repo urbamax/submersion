@@ -130,6 +130,20 @@ class DownloadState {
   bool get hasError => phase == DownloadPhase.error || errorMessage != null;
 }
 
+/// The Suunto Nautic / Nautic S / Ocean carry the watch serial only in
+/// their BLE advertised name (`Suunto Nautic <serial>` — the prefix
+/// `dc_filter_suunto_nautic` matches on); it is absent from the dive data
+/// and the driver reports no `DC_EVENT_DEVINFO`. Recover it from the name
+/// so the computer record and dive detail show a serial like other
+/// backends. Returns null for any other device or an unexpected name.
+String? suuntoSerialFromAdvertisedName(DiscoveredDevice? device) {
+  if (device == null) return null;
+  final match = RegExp(
+    r'^Suunto (?:Nautic|Ocean) ([0-9A-Za-z]{6,20})$',
+  ).firstMatch(device.name.trim());
+  return match?.group(1);
+}
+
 /// Notifier for managing the download process.
 ///
 /// Uses DiveComputerService to start downloads via libdivecomputer's
@@ -267,16 +281,21 @@ class DownloadNotifier extends StateNotifier<DownloadState> {
         :final serialNumber,
         :final firmwareVersion,
       ):
+        // The Suunto Nautic driver reports no device info; its serial lives
+        // in the BLE advertised name. Fall back to that when the backend
+        // gave us nothing.
+        final effectiveSerial =
+            serialNumber ?? suuntoSerialFromAdvertisedName(_device);
         state = state.copyWith(
           phase: DownloadPhase.complete,
           progress: DownloadProgress.complete(totalDives),
-          serialNumber: serialNumber,
+          serialNumber: effectiveSerial,
           firmwareVersion: firmwareVersion,
         );
         _downloadSubscription?.cancel();
         _downloadSubscription = null;
         // Persist device info on the computer record.
-        _persistDeviceInfo(serialNumber, firmwareVersion);
+        _persistDeviceInfo(effectiveSerial, firmwareVersion);
       case pigeon.DownloadErrorEvent(:final error):
         _log.error(
           'Download failed (${error.code}): ${error.message}',
