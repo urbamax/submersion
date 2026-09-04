@@ -13,15 +13,20 @@ Tracking: <https://github.com/deepsealabs/libdc-swift/issues/29>
 - `packages/libdivecomputer_plugin/third_party/libdivecomputer` points at
   [`urbamax/submersion-libdc`](https://github.com/urbamax/submersion-libdc)
   (= Submersion's `submersion-patches` + the Nautic driver/parser from libdivecomputer#73
-  + a CI/`<stdint.h>` fix, the event-mapping fix, and the `/Summary` cylinder-size decode)
+  + a CI/`<stdint.h>` fix, the event-mapping fix, the `/Summary` cylinder-size decode,
+  and a `DC_EVENT_DEVINFO` (firmware) fetch of `/Info`)
 - the plugin's native build files list the new sources on every platform
   (including the Android and MSVC project files, so all of `submersion-libdc`'s
   CI matrix builds)
 - `libdc_download.c` carries water temperature forward between samples
   (the Nautic logs temp far less often than depth — without this the trace is gaps)
-- the watch serial is taken from the BLE advertised name (`Suunto Nautic <serial>`)
-  and saved on the dive-computer record — it is not in the dive data and the
-  driver reports no device info
+- the watch **serial** is taken from the BLE advertised name and the **firmware**
+  from the driver's `/Info` fetch — both land on the dive-computer record
+- **exact event labels**: the Nautic passes its own `(sub-group, type)` code, decoded
+  to the Suunto app's wording ("Ascent rate alarm", "Deco stop reached", …)
+- a **"Computed events"** legend toggle so the app's own ascent-rate / safety-stop
+  markers don't stack on the watch's own (default: off when the dive has computer
+  events)
 
 Everything else is stock upstream Submersion.
 
@@ -52,12 +57,12 @@ Then: **Import → dive computer → Bluetooth scan.** The watch advertises
 
 ## Known limitations
 
-- Firmware version isn't shown (it's only available from a live `GET /Info`
-  request the driver doesn't make yet). The watch serial is shown; the
-  tank-transmitter serial the Suunto app displays is not (its value is computed
-  by Suunto from a MAC stored in the `/Summary` and that conversion isn't known).
-- The app's own computed events (ascent rate, safety stop) can overlap the
-  watch's own on the profile.
+- The tank-transmitter serial the Suunto app displays isn't shown (its value is
+  computed by Suunto from a MAC stored in the `/Summary` and that conversion isn't
+  known). The watch serial and firmware version are shown.
+- Two events the Suunto app shows are still dropped by the libdivecomputer driver
+  itself (low no-deco time, "became a deco dive") — a driver change is needed to
+  emit them.
 - No signed/notarised binary — build it yourself.
 
 ## Feedback
