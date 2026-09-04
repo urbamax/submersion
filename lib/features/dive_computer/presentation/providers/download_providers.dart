@@ -130,18 +130,32 @@ class DownloadState {
   bool get hasError => phase == DownloadPhase.error || errorMessage != null;
 }
 
-/// The Suunto Nautic / Nautic S / Ocean carry the watch serial only in
-/// their BLE advertised name (`Suunto Nautic <serial>` — the prefix
-/// `dc_filter_suunto_nautic` matches on); it is absent from the dive data
-/// and the driver reports no `DC_EVENT_DEVINFO`. Recover it from the name
-/// so the computer record and dive detail show a serial like other
-/// backends. Returns null for any other device or an unexpected name.
+/// The Suunto Nautic / Nautic S / Ocean carry the watch serial in their BLE
+/// advertised name (`Suunto Nautic <serial>` — the prefix
+/// `dc_filter_suunto_nautic` matches on); it is absent from the dive data.
+/// Recover it from the name so the computer record and dive detail show a
+/// serial like other backends. Returns null for any other device or an
+/// unexpected name.
 String? suuntoSerialFromAdvertisedName(DiscoveredDevice? device) {
   if (device == null) return null;
   final match = RegExp(
     r'^Suunto (?:Nautic|Ocean) ([0-9A-Za-z]{6,20})$',
   ).firstMatch(device.name.trim());
   return match?.group(1);
+}
+
+/// The Suunto Nautic driver packs its `A.B.C` firmware version into the
+/// single unsigned int `DC_EVENT_DEVINFO` exposes — `(a << 16) | (b << 8) | c`
+/// — which reaches Dart as a plain decimal string. Unpack it back to
+/// `A.B.C` for a Nautic / Ocean; pass anything else through untouched.
+String? unpackSuuntoNauticFirmware(DiscoveredDevice? device, String? raw) {
+  if (raw == null || device == null) return raw;
+  if (!RegExp(r'^Suunto (?:Nautic|Ocean)\b').hasMatch(device.name.trim())) {
+    return raw;
+  }
+  final packed = int.tryParse(raw.trim());
+  if (packed == null || packed <= 0 || packed > 0xFFFFFF) return raw;
+  return '${(packed >> 16) & 0xFF}.${(packed >> 8) & 0xFF}.${packed & 0xFF}';
 }
 
 /// Notifier for managing the download process.
@@ -281,21 +295,25 @@ class DownloadNotifier extends StateNotifier<DownloadState> {
         :final serialNumber,
         :final firmwareVersion,
       ):
-        // The Suunto Nautic driver reports no device info; its serial lives
-        // in the BLE advertised name. Fall back to that when the backend
-        // gave us nothing.
+        // The Suunto Nautic serial lives in the BLE advertised name — fall
+        // back to it when the backend reports none — and its firmware
+        // arrives packed into one int, so unpack it back to "A.B.C".
         final effectiveSerial =
             serialNumber ?? suuntoSerialFromAdvertisedName(_device);
+        final effectiveFirmware = unpackSuuntoNauticFirmware(
+          _device,
+          firmwareVersion,
+        );
         state = state.copyWith(
           phase: DownloadPhase.complete,
           progress: DownloadProgress.complete(totalDives),
           serialNumber: effectiveSerial,
-          firmwareVersion: firmwareVersion,
+          firmwareVersion: effectiveFirmware,
         );
         _downloadSubscription?.cancel();
         _downloadSubscription = null;
         // Persist device info on the computer record.
-        _persistDeviceInfo(effectiveSerial, firmwareVersion);
+        _persistDeviceInfo(effectiveSerial, effectiveFirmware);
       case pigeon.DownloadErrorEvent(:final error):
         _log.error(
           'Download failed (${error.code}): ${error.message}',
