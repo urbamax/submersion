@@ -278,4 +278,33 @@ void main() {
       expect(a, isNot(equals(c)));
     });
   });
+
+  group('markerLabel', () {
+    ProfileEvent event({String? description}) => ProfileEvent(
+      id: 'e1',
+      diveId: 'd1',
+      timestamp: 60,
+      eventType: ProfileEventType.ascentRateWarning,
+      description: description,
+      createdAt: now,
+    );
+
+    test('uses the description when present', () {
+      expect(
+        event(description: 'Ascent rate alarm').markerLabel,
+        'Ascent rate alarm',
+      );
+    });
+
+    test('falls back to the generic display name', () {
+      expect(
+        event().markerLabel,
+        ProfileEventType.ascentRateWarning.displayName,
+      );
+      expect(
+        event(description: '   ').markerLabel,
+        ProfileEventType.ascentRateWarning.displayName,
+      );
+    });
+  });
 }

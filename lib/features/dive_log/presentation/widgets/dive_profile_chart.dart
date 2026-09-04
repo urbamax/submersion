@@ -5893,7 +5893,7 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
           fontSize: 9,
           backgroundColor: colorScheme.surface.withValues(alpha: 0.8),
         ),
-        labelResolver: (line) => event.displayName,
+        labelResolver: (line) => event.markerLabel,
       ),
     );
   }

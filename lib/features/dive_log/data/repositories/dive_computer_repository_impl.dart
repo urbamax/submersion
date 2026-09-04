@@ -29,6 +29,7 @@ import 'package:submersion/features/dive_log/domain/codecs/profile_sample.dart'
     as codec;
 import 'package:submersion/features/dive_log/domain/codecs/tank_pressure_series_codec.dart'
     show TankPressureSample;
+import 'package:submersion/features/dive_computer/domain/services/suunto_nautic_event_labels.dart';
 import 'package:submersion/features/dive_log/domain/services/bottom_time_calculator.dart';
 import 'package:submersion/features/dive_log/domain/services/dive_altitude_enricher.dart';
 import 'package:submersion/features/dive_log/domain/services/tank_pressure_series.dart';
@@ -1566,6 +1567,13 @@ class DiveComputerRepository {
 
       // Batch insert dive events
       if (events != null && events.isNotEmpty) {
+        // The Suunto Nautic passes its own (sub-group, type) event code
+        // through event.value; decode it to the exact Suunto label
+        // (issue #1523).
+        final nauticEvents = isSuuntoNauticFamily(
+          descriptorVendor,
+          descriptorProduct,
+        );
         await _db.batch((batch) {
           for (final event in events) {
             final eventType = _mapEventTypeString(event.type);
@@ -1573,6 +1581,9 @@ class DiveComputerRepository {
 
             // Find depth at event time from profile points
             final depthAtEvent = _findDepthAtTime(points, event.timestamp);
+            final nativeLabel = nauticEvents
+                ? suuntoNauticEventLabel(event.value)
+                : null;
 
             batch.insert(
               _db.diveProfileEvents,
@@ -1584,6 +1595,7 @@ class DiveComputerRepository {
                 eventType: Value(eventType),
                 severity: Value(_eventSeverity(eventType)),
                 source: const Value('imported'), // native DC events are imports
+                description: Value(nativeLabel),
                 depth: Value(depthAtEvent),
                 value: Value(event.value?.toDouble()),
                 createdAt: Value(now),

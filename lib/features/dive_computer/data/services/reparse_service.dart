@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import 'package:submersion/core/data/repositories/sync_repository.dart';
 import 'package:submersion/core/database/database.dart';
 import 'package:submersion/features/dive_computer/data/services/libdc_dive_mode.dart';
+import 'package:submersion/features/dive_computer/domain/services/suunto_nautic_event_labels.dart';
 import 'package:submersion/features/dive_log/data/repositories/profile_series_repository.dart';
 import 'package:submersion/features/dive_log/data/repositories/tank_pressure_series_repository.dart';
 import 'package:submersion/features/dive_log/domain/codecs/profile_sample.dart'
@@ -167,6 +168,8 @@ class ReparseService {
           diveId: diveId,
           computerId: computerId,
           parsed: parsed,
+          descriptorVendor: descriptorVendor,
+          descriptorProduct: descriptorProduct,
           now: now,
         );
       }
@@ -600,16 +603,29 @@ class ReparseService {
     required String diveId,
     required String? computerId,
     required pigeon.ParsedDive parsed,
+    required String? descriptorVendor,
+    required String? descriptorProduct,
     required DateTime now,
   }) async {
     if (parsed.events.isEmpty) return;
 
     final nowMs = now.millisecondsSinceEpoch;
+    final nauticEvents = isSuuntoNauticFamily(
+      descriptorVendor,
+      descriptorProduct,
+    );
 
     await db.batch((batch) {
       for (final e in parsed.events) {
         final eventType = _mapEventTypeString(e.type);
         if (eventType == null) continue;
+
+        final rawValue = e.data != null
+            ? double.tryParse(e.data!['value'] ?? '')
+            : null;
+        final nativeLabel = nauticEvents
+            ? suuntoNauticEventLabel(rawValue?.toInt())
+            : null;
 
         batch.insert(
           db.diveProfileEvents,
@@ -621,10 +637,9 @@ class ReparseService {
             eventType: Value(eventType),
             severity: Value(_eventSeverity(eventType)),
             source: const Value('imported'), // native DC events are imports
+            description: Value(nativeLabel),
             depth: const Value(null),
-            value: Value(
-              e.data != null ? double.tryParse(e.data!['value'] ?? '') : null,
-            ),
+            value: Value(rawValue),
             createdAt: Value(nowMs),
           ),
         );

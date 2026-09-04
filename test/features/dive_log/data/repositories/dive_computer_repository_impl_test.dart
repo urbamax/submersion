@@ -940,6 +940,64 @@ void main() {
       expect(dive.diveType, 'recreational');
     });
 
+    test('a Suunto Nautic import keeps the watch\'s exact event label in '
+        'description (issue #1523)', () async {
+      final computerId = await insertComputer();
+
+      final diveId = await repository.importProfile(
+        computerId: computerId,
+        profileStartTime: DateTime(2026, 4, 1, 11, 50),
+        points: const [
+          ProfilePointData(timestamp: 0, depth: 1.0),
+          ProfilePointData(timestamp: 600, depth: 18.0),
+        ],
+        durationSeconds: 1800,
+        maxDepth: 18.0,
+        descriptorVendor: 'Suunto',
+        descriptorProduct: 'Nautic',
+        events: const [
+          // Alarm (0x18) type 5 = ascent rate; driver maps to 'ascent'
+          EventData(timestamp: 600, type: 'ascent', value: (0x18 << 8) | 5),
+          // State (0x1B) type 35 = deco stop reached; maps to 'deco'
+          EventData(timestamp: 900, type: 'deco', value: (0x1B << 8) | 35),
+        ],
+        forceNew: true,
+      );
+
+      final events =
+          await (db.select(db.diveProfileEvents)
+                ..where((t) => t.diveId.equals(diveId))
+                ..orderBy([(t) => OrderingTerm.asc(t.timestamp)]))
+              .get();
+      expect(
+        events.map((e) => e.description),
+        ['Ascent rate alarm', 'Deco stop reached'],
+      );
+    });
+
+    test('a non-Nautic import leaves event description null', () async {
+      final computerId = await insertComputer();
+      final diveId = await repository.importProfile(
+        computerId: computerId,
+        profileStartTime: DateTime(2026, 4, 1, 11, 45),
+        points: const [
+          ProfilePointData(timestamp: 0, depth: 1.0),
+          ProfilePointData(timestamp: 600, depth: 18.0),
+        ],
+        durationSeconds: 1800,
+        maxDepth: 18.0,
+        descriptorVendor: 'Shearwater',
+        descriptorProduct: 'Perdix',
+        events: const [EventData(timestamp: 600, type: 'ascent', value: 6149)],
+        forceNew: true,
+      );
+      final row =
+          await (db.select(db.diveProfileEvents)
+                ..where((t) => t.diveId.equals(diveId)))
+              .getSingle();
+      expect(row.description, isNull);
+    });
+
     test('a no-deco profile defaults the dive type to recreational', () async {
       final computerId = await insertComputer();
       final entryTime = DateTime(2026, 4, 1, 12, 0);

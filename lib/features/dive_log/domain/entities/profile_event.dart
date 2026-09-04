@@ -77,6 +77,14 @@ class ProfileEvent extends Equatable {
   /// Get display name for this event
   String get displayName => eventType.displayName;
 
+  /// The most specific label for a chart marker or list row: an imported
+  /// [description] (e.g. the exact Suunto Nautic event name) when present,
+  /// otherwise the generic [displayName].
+  String get markerLabel {
+    final d = description?.trim();
+    return (d != null && d.isNotEmpty) ? d : displayName;
+  }
+
   /// Get icon name for this event type
   String get iconName => eventType.iconName;
 
