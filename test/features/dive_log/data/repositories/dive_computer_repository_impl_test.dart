@@ -998,6 +998,40 @@ void main() {
       expect(row.description, isNull);
     });
 
+    test('a Suunto Nautic import rebuilds the low-NDL and decompression-dive '
+        'events the driver drops (issue #1523)', () async {
+      final computerId = await insertComputer();
+      final diveId = await repository.importProfile(
+        computerId: computerId,
+        profileStartTime: DateTime(2026, 4, 1, 11, 40),
+        points: const [
+          ProfilePointData(timestamp: 0, depth: 1.0, ndl: 3600),
+          ProfilePointData(timestamp: 300, depth: 30.0, ndl: 240), // low NDL
+          ProfilePointData(timestamp: 600, depth: 32.0, ndl: 0, ceiling: 3.0),
+        ],
+        durationSeconds: 1800,
+        maxDepth: 32.0,
+        descriptorVendor: 'Suunto',
+        descriptorProduct: 'Nautic',
+        forceNew: true,
+      );
+
+      final events =
+          await (db.select(db.diveProfileEvents)
+                ..where((t) => t.diveId.equals(diveId))
+                ..orderBy([(t) => OrderingTerm.asc(t.timestamp)]))
+              .get();
+      expect(
+        events.map((e) => e.eventType),
+        ['lowNoDecoTime', 'decompressionDive'],
+      );
+      final lowNdl = events.first;
+      expect(lowNdl.description, 'Low no-deco time');
+      expect(lowNdl.value, 4.0); // 240 s -> 4 min
+      expect(lowNdl.timestamp, 300);
+      expect(events.every((e) => e.source == 'imported'), isTrue);
+    });
+
     test('a no-deco profile defaults the dive type to recreational', () async {
       final computerId = await insertComputer();
       final entryTime = DateTime(2026, 4, 1, 12, 0);

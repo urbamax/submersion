@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import 'package:submersion/core/data/repositories/sync_repository.dart';
 import 'package:submersion/core/database/database.dart';
 import 'package:submersion/features/dive_computer/data/services/libdc_dive_mode.dart';
+import 'package:submersion/features/dive_computer/domain/services/suunto_nautic_derived_events.dart';
 import 'package:submersion/features/dive_computer/domain/services/suunto_nautic_event_labels.dart';
 import 'package:submersion/features/dive_log/data/repositories/profile_series_repository.dart';
 import 'package:submersion/features/dive_log/data/repositories/tank_pressure_series_repository.dart';
@@ -645,6 +646,45 @@ class ReparseService {
         );
       }
     });
+
+    // Rebuild the two events the Suunto Nautic driver drops, from the
+    // watch's own per-sample NDL / ceiling (issue #1523).
+    if (nauticEvents && parsed.samples.isNotEmpty) {
+      final s = parsed.samples;
+      final derived = deriveSuuntoNauticEvents(
+        timestamps: [for (final x in s) x.timeSeconds],
+        depths: [for (final x in s) x.depthMeters],
+        ndlSeconds: [
+          for (final x in s)
+            x.decoType == 0
+                ? x.decoTime
+                : (x.decoType == null ? null : 0),
+        ],
+        ceilings: [for (final x in s) x.decoDepth],
+      );
+      if (derived.isNotEmpty) {
+        await db.batch((batch) {
+          for (final ev in derived) {
+            batch.insert(
+              db.diveProfileEvents,
+              DiveProfileEventsCompanion(
+                id: Value(_uuid.v4()),
+                diveId: Value(diveId),
+                computerId: Value(computerId),
+                timestamp: Value(ev.timestampSeconds),
+                eventType: Value(ev.type.name),
+                severity: Value(ev.type.defaultSeverity),
+                source: const Value('imported'),
+                description: Value(ev.description),
+                depth: Value(ev.depth),
+                value: Value(ev.value),
+                createdAt: Value(nowMs),
+              ),
+            );
+          }
+        });
+      }
+    }
   }
 
   /// Re-inserts gas switches derived from per-sample gas-mix transitions.

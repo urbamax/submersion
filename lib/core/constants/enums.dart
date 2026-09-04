@@ -418,6 +418,15 @@ enum ProfileEventType {
   ppO2High('High ppO2', 'warning'),
   ppO2Low('Low ppO2', 'warning'),
   setpointChange('Setpoint Change', 'info'),
+
+  /// The computer's no-deco time dropped to its low-NDL warning threshold
+  /// (Suunto Nautic "Faible LND"). [ProfileEvent.value] carries the minutes
+  /// remaining.
+  lowNoDecoTime('Low no-deco time', 'warning'),
+
+  /// The dive crossed into a mandatory-decompression obligation (Suunto
+  /// Nautic "Plongée avec décompression").
+  decompressionDive('Decompression dive', 'info'),
   bookmark('Bookmark', 'info'),
   alert('Alert', 'alert'),
   note('Note', 'info');
@@ -458,6 +467,10 @@ enum ProfileEventType {
         return 'warning';
       case ProfileEventType.setpointChange:
         return 'tune';
+      case ProfileEventType.lowNoDecoTime:
+        return 'timelapse';
+      case ProfileEventType.decompressionDive:
+        return 'info';
       case ProfileEventType.bookmark:
         return 'bookmark';
       case ProfileEventType.alert:

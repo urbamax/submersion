@@ -16,7 +16,7 @@ import 'package:submersion/l10n/arb/app_localizations.dart';
 /// moment in the diver's depth unit ("· 14.0 m/min"), like the Suunto app.
 
 class _Settings extends StateNotifier<AppSettings> implements SettingsNotifier {
-  _Settings([AppSettings s = const AppSettings()]) : super(s);
+  _Settings([super.s = const AppSettings()]);
   @override
   Future<void> setMapStyle(MapStyle style) async =>
       state = state.copyWith(mapStyle: style);

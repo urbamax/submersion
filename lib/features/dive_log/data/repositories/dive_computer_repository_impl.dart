@@ -29,6 +29,7 @@ import 'package:submersion/features/dive_log/domain/codecs/profile_sample.dart'
     as codec;
 import 'package:submersion/features/dive_log/domain/codecs/tank_pressure_series_codec.dart'
     show TankPressureSample;
+import 'package:submersion/features/dive_computer/domain/services/suunto_nautic_derived_events.dart';
 import 'package:submersion/features/dive_computer/domain/services/suunto_nautic_event_labels.dart';
 import 'package:submersion/features/dive_log/domain/services/bottom_time_calculator.dart';
 import 'package:submersion/features/dive_log/domain/services/dive_altitude_enricher.dart';
@@ -1604,6 +1605,42 @@ class DiveComputerRepository {
           }
         });
         _log.info('Imported events for dive $diveId');
+      }
+
+      // The Suunto Nautic shows a "low no-deco time" and a "decompression
+      // dive" event its libdivecomputer driver drops; rebuild them from the
+      // watch's own NDL / ceiling telemetry (issue #1523).
+      if (isSuuntoNauticFamily(descriptorVendor, descriptorProduct) &&
+          points.isNotEmpty) {
+        final derived = deriveSuuntoNauticEvents(
+          timestamps: [for (final p in points) p.timestamp],
+          depths: [for (final p in points) p.depth],
+          ndlSeconds: [for (final p in points) p.ndl],
+          ceilings: [for (final p in points) p.ceiling],
+        );
+        if (derived.isNotEmpty) {
+          await _db.batch((batch) {
+            for (final e in derived) {
+              batch.insert(
+                _db.diveProfileEvents,
+                DiveProfileEventsCompanion(
+                  id: Value(_uuid.v4()),
+                  diveId: Value(diveId),
+                  computerId: Value(computerId),
+                  timestamp: Value(e.timestampSeconds),
+                  eventType: Value(e.type.name),
+                  severity: Value(e.type.defaultSeverity),
+                  source: const Value('imported'),
+                  description: Value(e.description),
+                  depth: Value(e.depth),
+                  value: Value(e.value),
+                  createdAt: Value(now),
+                ),
+              );
+            }
+          });
+          _log.info('Derived ${derived.length} Suunto Nautic events for $diveId');
+        }
       }
 
       if (!isNewDive) {

@@ -5874,6 +5874,8 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
         event.timestamp,
         units,
       ),
+      ProfileEventType.lowNoDecoTime =>
+        event.value == null ? null : '${event.value!.round()} min',
       _ => null,
     };
     if (suffix == null) return base;
