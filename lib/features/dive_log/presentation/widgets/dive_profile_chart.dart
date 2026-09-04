@@ -5817,7 +5817,9 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
       final t = kept[i].timestamp.toDouble();
       if (t < visibleMinX || t > visibleMaxX) continue;
       final painter = TextPainter(
-        text: TextSpan(text: kept[i].displayName, style: labelStyle),
+        // Must match what _eventVerticalLine's labelResolver renders, or the
+        // collision-avoidance placement is measured against the wrong width.
+        text: TextSpan(text: kept[i].markerLabel, style: labelStyle),
         // Deliberately LTR regardless of locale: fl_chart's painter lays
         // vertical-line labels out with TextDirection.ltr
         // (axis_chart_painter.dart), and this measurement must match the
