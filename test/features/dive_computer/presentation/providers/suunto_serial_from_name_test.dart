@@ -48,4 +48,45 @@ void main() {
       );
     });
   });
+
+  group('unpackSuuntoNauticFirmware', () {
+    test('unpacks the packed int back to A.B.C for a Nautic', () {
+      // 2.55.46 -> (2<<16)|(55<<8)|46 = 145198
+      expect(
+        unpackSuuntoNauticFirmware(
+          _device('Suunto Nautic 2604C3003306'),
+          '145198',
+        ),
+        '2.55.46',
+      );
+    });
+
+    test('passes a non-numeric string through', () {
+      expect(
+        unpackSuuntoNauticFirmware(_device('Suunto Ocean 1234AB005678'), '3.1.0'),
+        '3.1.0',
+      );
+    });
+
+    test('leaves another vendor untouched', () {
+      expect(
+        unpackSuuntoNauticFirmware(_device('Perdix 2 AI 330123'), '92'),
+        '92',
+      );
+    });
+
+    test('null and out-of-range pass through', () {
+      expect(
+        unpackSuuntoNauticFirmware(_device('Suunto Nautic 2604C3003306'), null),
+        isNull,
+      );
+      expect(
+        unpackSuuntoNauticFirmware(
+          _device('Suunto Nautic 2604C3003306'),
+          '99999999',
+        ),
+        '99999999',
+      );
+    });
+  });
 }
