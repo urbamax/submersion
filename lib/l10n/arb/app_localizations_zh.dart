@@ -5624,6 +5624,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get diveLog_legend_label_computedEvents => 'Computed events';
 
   @override
+  String get diveLog_legend_label_computerData => 'Computer data';
+
+  @override
   String get diveLog_legend_label_gasDensity => '气体密度';
 
   @override
@@ -31211,6 +31214,10 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get settings_decompression_header_dataSources_subtitle =>
       '设置为“潜水电脑”时，应用会在可用时使用潜水电脑报告的数据。若没有电脑数据，则回退到计算值。';
+
+  @override
+  String get settings_decompression_dataSources_useComputer =>
+      'Prefer the dive computer';
 
   @override
   String get settings_decompression_ndlSource => 'NDL 来源';

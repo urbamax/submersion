@@ -5797,6 +5797,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get diveLog_legend_label_computedEvents => 'Computed events';
 
   @override
+  String get diveLog_legend_label_computerData => 'Computer data';
+
+  @override
   String get diveLog_legend_label_gasDensity => 'كثافة الغاز';
 
   @override
@@ -32665,6 +32668,10 @@ class AppLocalizationsAr extends AppLocalizations {
   @override
   String get settings_decompression_header_dataSources_subtitle =>
       'عند ضبطه على حاسوب الغوص، يستخدم التطبيق البيانات التي يبلّغ عنها حاسوب الغوص عند توفرها. ويرجع إلى القيم المحسوبة عند عدم توفر بيانات الحاسوب.';
+
+  @override
+  String get settings_decompression_dataSources_useComputer =>
+      'Prefer the dive computer';
 
   @override
   String get settings_decompression_ndlSource => 'مصدر NDL';

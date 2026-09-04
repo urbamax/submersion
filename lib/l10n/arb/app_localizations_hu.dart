@@ -5902,6 +5902,9 @@ class AppLocalizationsHu extends AppLocalizations {
   String get diveLog_legend_label_computedEvents => 'Computed events';
 
   @override
+  String get diveLog_legend_label_computerData => 'Computer data';
+
+  @override
   String get diveLog_legend_label_gasDensity => 'Gaz suruseg';
 
   @override
@@ -32952,6 +32955,10 @@ class AppLocalizationsHu extends AppLocalizations {
   @override
   String get settings_decompression_header_dataSources_subtitle =>
       'Ha a Búvárcomputer beállítás aktív, az alkalmazás a búvárcomputer által jelentett adatokat használja, amikor elérhetők. Ha nincs computeradat, a számított értékekre vált.';
+
+  @override
+  String get settings_decompression_dataSources_useComputer =>
+      'Prefer the dive computer';
 
   @override
   String get settings_decompression_ndlSource => 'NDL forrása';

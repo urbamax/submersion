@@ -180,6 +180,16 @@ class ProfileLegendState {
   /// Whether any secondary toggle is active
   bool get hasActiveSecondary => activeSecondaryCount > 0;
 
+  /// Whether every source-selectable metric (deco stop, NDL, TTS, GTR, CNS)
+  /// is currently pinned to the dive computer's own value rather than the
+  /// app's calculation. Drives the "Computer data" master toggle.
+  bool get allMetricsFromComputer =>
+      ndlSource == MetricDataSource.computer &&
+      ttsSource == MetricDataSource.computer &&
+      cnsSource == MetricDataSource.computer &&
+      decoStopSource == MetricDataSource.computer &&
+      gtrSource == MetricDataSource.computer;
+
   ProfileLegendState copyWith({
     ProfileRightAxisMetric? rightAxisMetric,
     bool clearRightAxisMetric = false,
@@ -611,25 +621,71 @@ class ProfileLegend extends _$ProfileLegend {
     state = state.copyWith(showO2CellMv: !state.showO2CellMv);
   }
 
-  // Data source set methods (for SegmentedButton)
+  // Data source set methods (for SegmentedButton). Each also marks the metric
+  // source as user-chosen so the per-dive seed stops overriding it.
   void setDecoStopSource(MetricDataSource source) {
+    _metricSourceUserSet = true;
     state = state.copyWith(decoStopSource: source);
   }
 
   void setNdlSource(MetricDataSource source) {
+    _metricSourceUserSet = true;
     state = state.copyWith(ndlSource: source);
   }
 
   void setTtsSource(MetricDataSource source) {
+    _metricSourceUserSet = true;
     state = state.copyWith(ttsSource: source);
   }
 
   void setGtrSource(MetricDataSource source) {
+    _metricSourceUserSet = true;
     state = state.copyWith(gtrSource: source);
   }
 
   void setCnsSource(MetricDataSource source) {
+    _metricSourceUserSet = true;
     state = state.copyWith(cnsSource: source);
+  }
+
+  /// Records that the user has explicitly chosen a metric source, so
+  /// [seedMetricSourcePreference] stops overriding their choice.
+  bool _metricSourceUserSet = false;
+
+  /// Pin every source-selectable metric to [source] at once — the "Computer
+  /// data" master toggle.
+  void setAllMetricSources(MetricDataSource source) {
+    _metricSourceUserSet = true;
+    state = state.copyWith(
+      ndlSource: source,
+      ttsSource: source,
+      cnsSource: source,
+      decoStopSource: source,
+      gtrSource: source,
+    );
+  }
+
+  /// Seed the metric-source preference from the dive: prefer the computer's
+  /// own values on a computer download, the app's calculation otherwise. A
+  /// no-op once the user has touched any source control this session.
+  void seedMetricSourcePreference({required bool isComputerDownload}) {
+    if (_metricSourceUserSet) return;
+    final want = isComputerDownload
+        ? MetricDataSource.computer
+        : MetricDataSource.calculated;
+    if (state.ndlSource != want ||
+        state.ttsSource != want ||
+        state.cnsSource != want ||
+        state.decoStopSource != want ||
+        state.gtrSource != want) {
+      state = state.copyWith(
+        ndlSource: want,
+        ttsSource: want,
+        cnsSource: want,
+        decoStopSource: want,
+        gtrSource: want,
+      );
+    }
   }
 
   // Section expand/collapse
@@ -685,6 +741,7 @@ class ProfileLegend extends _$ProfileLegend {
   /// Reset all toggles to their default values
   void reset() {
     _computedEventsUserSet = false;
+    _metricSourceUserSet = false;
     state = const ProfileLegendState();
   }
 }

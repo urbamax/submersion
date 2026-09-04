@@ -595,4 +595,66 @@ void main() {
       expect(on.copyWith(showSac: true).showComputedEvents, isTrue);
     });
   });
+
+  group('Computer-data master toggle (issue #1523)', () {
+    ProviderContainer makeContainer() {
+      final container = ProviderContainer(
+        overrides: [
+          settingsProvider.overrideWith(
+            (ref) => _StubSettingsNotifier(const AppSettings()),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      final sub = container.listen(profileLegendProvider, (_, _) {});
+      addTearDown(sub.close);
+      return container;
+    }
+
+    test('defaults to calculated for every source-selectable metric', () {
+      final c = makeContainer();
+      expect(c.read(profileLegendProvider).allMetricsFromComputer, isFalse);
+    });
+
+    test('setAllMetricSources pins all five at once', () {
+      final c = makeContainer();
+      c
+          .read(profileLegendProvider.notifier)
+          .setAllMetricSources(MetricDataSource.computer);
+      final s = c.read(profileLegendProvider);
+      expect(s.allMetricsFromComputer, isTrue);
+      expect(s.ndlSource, MetricDataSource.computer);
+      expect(s.gtrSource, MetricDataSource.computer);
+      expect(s.decoStopSource, MetricDataSource.computer);
+    });
+
+    test('seeds to computer on a computer download', () {
+      final c = makeContainer();
+      c
+          .read(profileLegendProvider.notifier)
+          .seedMetricSourcePreference(isComputerDownload: true);
+      expect(c.read(profileLegendProvider).allMetricsFromComputer, isTrue);
+    });
+
+    test('seeds to calculated on a manual / file dive (no-op from default)', () {
+      final c = makeContainer();
+      c
+          .read(profileLegendProvider.notifier)
+          .seedMetricSourcePreference(isComputerDownload: false);
+      expect(c.read(profileLegendProvider).allMetricsFromComputer, isFalse);
+      expect(
+        c.read(profileLegendProvider).ndlSource,
+        MetricDataSource.calculated,
+      );
+    });
+
+    test('a manual per-metric choice stops the seed', () {
+      final c = makeContainer();
+      final n = c.read(profileLegendProvider.notifier);
+      n.setNdlSource(MetricDataSource.calculated);
+      n.seedMetricSourcePreference(isComputerDownload: true);
+      // The seed must not have flipped everything to computer.
+      expect(c.read(profileLegendProvider).allMetricsFromComputer, isFalse);
+    });
+  });
 }

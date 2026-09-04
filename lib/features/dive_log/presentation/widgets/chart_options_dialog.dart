@@ -301,7 +301,25 @@ class ChartOptionsDialog extends StatelessWidget {
     }
 
     // Decompression section
+    final hasSourceSelectableMetric =
+        config.hasDecoStopCurve ||
+        config.hasNdlData ||
+        config.hasTtsData ||
+        config.hasGtrData ||
+        config.hasCnsData;
     final decoItems = <Widget>[
+      if (hasSourceSelectableMetric)
+        buildToggleItem(
+          context,
+          label: context.l10n.diveLog_legend_label_computerData,
+          color: Theme.of(context).colorScheme.primary,
+          isEnabled: legendState.allMetricsFromComputer,
+          onTap: () => legendNotifier.setAllMetricSources(
+            legendState.allMetricsFromComputer
+                ? MetricDataSource.calculated
+                : MetricDataSource.computer,
+          ),
+        ),
       if (config.hasDecoStopCurve)
         buildToggleWithSource(
           context,

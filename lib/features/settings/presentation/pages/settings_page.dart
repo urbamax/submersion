@@ -1204,6 +1204,33 @@ class _DecompressionSectionContent extends ConsumerWidget {
           Card(
             child: Column(
               children: [
+                SwitchListTile(
+                  title: Text(
+                    context.l10n.settings_decompression_dataSources_useComputer,
+                  ),
+                  value:
+                      settings.defaultNdlSource == MetricDataSource.computer &&
+                      settings.defaultCeilingSource ==
+                          MetricDataSource.computer &&
+                      settings.defaultDecoStopSource ==
+                          MetricDataSource.computer &&
+                      settings.defaultTtsSource == MetricDataSource.computer &&
+                      settings.defaultCnsSource == MetricDataSource.computer &&
+                      settings.defaultGtrSource == MetricDataSource.computer,
+                  onChanged: (on) {
+                    final src = on
+                        ? MetricDataSource.computer
+                        : MetricDataSource.calculated;
+                    final s = ref.read(settingsProvider.notifier);
+                    s.setDefaultNdlSource(src);
+                    s.setDefaultCeilingSource(src);
+                    s.setDefaultDecoStopSource(src);
+                    s.setDefaultTtsSource(src);
+                    s.setDefaultCnsSource(src);
+                    s.setDefaultGtrSource(src);
+                  },
+                ),
+                const Divider(height: 1),
                 _buildSourceDropdownTile(
                   context,
                   title: context.l10n.settings_decompression_ndlSource,

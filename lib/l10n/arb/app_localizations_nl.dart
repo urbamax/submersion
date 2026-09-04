@@ -5875,6 +5875,9 @@ class AppLocalizationsNl extends AppLocalizations {
   String get diveLog_legend_label_computedEvents => 'Computed events';
 
   @override
+  String get diveLog_legend_label_computerData => 'Computer data';
+
+  @override
   String get diveLog_legend_label_gasDensity => 'Gasdichtheid';
 
   @override
@@ -32868,6 +32871,10 @@ class AppLocalizationsNl extends AppLocalizations {
   @override
   String get settings_decompression_header_dataSources_subtitle =>
       'Bij de instelling Duikcomputer gebruikt de app de gegevens die de duikcomputer meldt, als die beschikbaar zijn. Zijn er geen computergegevens, dan gebruikt de app berekende waarden.';
+
+  @override
+  String get settings_decompression_dataSources_useComputer =>
+      'Prefer the dive computer';
 
   @override
   String get settings_decompression_ndlSource => 'NDL-bron';

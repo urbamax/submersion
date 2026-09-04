@@ -1162,8 +1162,10 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
     });
   }
 
-  /// Seed the legend's "Computed events" toggle from this dive: hidden when the
-  /// dive carries the computer's own events, shown otherwise (issue #1523).
+  /// Seed the legend's "Computed events" toggle and its "Computer data"
+  /// metric-source preference from this dive: on a computer download, show
+  /// just the computer's events and prefer its own NDL / TTS / deco values;
+  /// on a manual or file-import dive, show the app's analysis (issue #1523).
   void _scheduleComputedEventsSeed() {
     final events = widget.events;
     if (events == null || events.isEmpty) return;
@@ -1173,6 +1175,9 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
       ref
           .read(profileLegendProvider.notifier)
           .seedComputedEventsVisibility(diveHasImportedEvents: hasImported);
+      ref
+          .read(profileLegendProvider.notifier)
+          .seedMetricSourcePreference(isComputerDownload: hasImported);
     });
   }
 

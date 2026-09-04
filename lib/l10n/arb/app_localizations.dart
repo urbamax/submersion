@@ -9845,6 +9845,12 @@ abstract class AppLocalizations {
   /// **'Computed events'**
   String get diveLog_legend_label_computedEvents;
 
+  /// No description provided for @diveLog_legend_label_computerData.
+  ///
+  /// In en, this message translates to:
+  /// **'Computer data'**
+  String get diveLog_legend_label_computerData;
+
   /// No description provided for @diveLog_legend_label_gasDensity.
   ///
   /// In en, this message translates to:
@@ -54927,6 +54933,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'When set to Dive Computer, the app uses data reported by the dive computer when available. Falls back to calculated values when computer data is not present.'**
   String get settings_decompression_header_dataSources_subtitle;
+
+  /// No description provided for @settings_decompression_dataSources_useComputer.
+  ///
+  /// In en, this message translates to:
+  /// **'Prefer the dive computer'**
+  String get settings_decompression_dataSources_useComputer;
 
   /// No description provided for @settings_decompression_ndlSource.
   ///

@@ -5812,6 +5812,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get diveLog_legend_label_computedEvents => 'Computed events';
 
   @override
+  String get diveLog_legend_label_computerData => 'Computer data';
+
+  @override
   String get diveLog_legend_label_gasDensity => 'Gas Density';
 
   @override
@@ -32626,6 +32629,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settings_decompression_header_dataSources_subtitle =>
       'When set to Dive Computer, the app uses data reported by the dive computer when available. Falls back to calculated values when computer data is not present.';
+
+  @override
+  String get settings_decompression_dataSources_useComputer =>
+      'Prefer the dive computer';
 
   @override
   String get settings_decompression_ndlSource => 'NDL Source';
