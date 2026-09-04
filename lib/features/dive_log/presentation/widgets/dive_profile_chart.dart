@@ -5806,6 +5806,12 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
       }
     }
 
+    // The label each marker actually renders: the event name plus, for
+    // metric events, the value at that moment in the diver's unit ("Ascent
+    // rate alarm · 14 m/min"). Computed once so the width measurement and
+    // the resolver never disagree.
+    final labelTexts = [for (final e in kept) _eventLabelWithValue(e, units)];
+
     // Collision-aware label placement for the events inside the visible
     // window: anchored below the profile depth at the event's time (free
     // water instead of the surface tail), flipped off the plot edges, and
@@ -5819,7 +5825,7 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
       final painter = TextPainter(
         // Must match what _eventVerticalLine's labelResolver renders, or the
         // collision-avoidance placement is measured against the wrong width.
-        text: TextSpan(text: kept[i].markerLabel, style: labelStyle),
+        text: TextSpan(text: labelTexts[i], style: labelStyle),
         // Deliberately LTR regardless of locale: fl_chart's painter lays
         // vertical-line labels out with TextDirection.ltr
         // (axis_chart_painter.dart), and this measurement must match the
@@ -5854,12 +5860,46 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
 
     return [
       for (var i = 0; i < kept.length; i++)
-        _eventVerticalLine(kept[i], labelByEvent[i], colorScheme),
+        _eventVerticalLine(kept[i], labelTexts[i], labelByEvent[i], colorScheme),
     ];
+  }
+
+  /// The event's name, plus the value at its timestamp in the diver's unit
+  /// for the metric events the Suunto app also annotates (issue #1523).
+  String _eventLabelWithValue(ProfileEvent event, UnitFormatter units) {
+    final base = event.markerLabel;
+    final suffix = switch (event.eventType) {
+      ProfileEventType.ascentRateWarning ||
+      ProfileEventType.ascentRateCritical => _ascentRateAt(
+        event.timestamp,
+        units,
+      ),
+      _ => null,
+    };
+    if (suffix == null) return base;
+    return '$base · $suffix';
+  }
+
+  /// Ascent rate at [timestamp] in the diver's depth unit ("14 m/min" /
+  /// "46 ft/min"), or null when there's no ascent-rate data or the rate is
+  /// negligible.
+  String? _ascentRateAt(int timestamp, UnitFormatter units) {
+    final rates = widget.ascentRates;
+    if (rates == null || rates.isEmpty) return null;
+    final n = math.min(widget.profile.length, rates.length);
+    if (n == 0) return null;
+    final idx = _lastProfileIndexAtOrBefore(
+      timestamp.toDouble(),
+      n,
+    ).clamp(0, n - 1);
+    final mpm = rates[idx].rateMetersPerMin.abs();
+    if (mpm < 1.0) return null;
+    return '${units.convertDepth(mpm).toStringAsFixed(1)} ${units.depthSymbol}/min';
   }
 
   VerticalLine _eventVerticalLine(
     ProfileEvent event,
+    String labelText,
     (EventLabelSpec, EventLabelPlacement)? label,
     ColorScheme colorScheme,
   ) {
@@ -5895,7 +5935,7 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
           fontSize: 9,
           backgroundColor: colorScheme.surface.withValues(alpha: 0.8),
         ),
-        labelResolver: (line) => event.markerLabel,
+        labelResolver: (line) => labelText,
       ),
     );
   }
