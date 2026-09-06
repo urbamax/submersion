@@ -1639,7 +1639,9 @@ class DiveComputerRepository {
               );
             }
           });
-          _log.info('Derived ${derived.length} Suunto Nautic events for $diveId');
+          _log.info(
+            'Derived ${derived.length} Suunto Nautic events for $diveId',
+          );
         }
       }
 
@@ -2120,6 +2122,15 @@ class DiveComputerRepository {
         // Remaining bottom time (Uwatec) and air time (Suunto) alarms both
         // mean the gas supply is running short at the current rate.
         return 'lowGas';
+      // The Suunto Cloud parser (suunto_cloud_event_map) speaks
+      // ProfileEventType names directly for the events with no
+      // libdivecomputer equivalent.
+      case 'cnsWarning':
+      case 'cnsCritical':
+      case 'missedStop':
+      case 'lowNoDecoTime':
+      case 'decompressionDive':
+        return type;
       default:
         return null;
     }
@@ -2132,14 +2143,19 @@ class DiveComputerRepository {
     switch (eventType) {
       case 'decoViolation':
       case 'ppO2High':
+      case 'cnsCritical':
+      case 'missedStop':
         return 'alert';
       case 'ascentRateWarning':
       case 'lowGas':
+      case 'cnsWarning':
+      case 'lowNoDecoTime':
         return 'warning';
       case 'safetyStopStart':
       case 'decoStopStart':
       case 'gasSwitch':
       case 'bookmark':
+      case 'decompressionDive':
       default:
         return 'info';
     }

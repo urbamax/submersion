@@ -102,5 +102,12 @@ String? suuntoNauticEventLabel(int? nativeValue) {
 
 /// Whether [vendor]/[product] name a Suunto Nautic-family computer whose
 /// `event.value` should be run through [suuntoNauticEventLabel].
-bool isSuuntoNauticFamily(String? vendor, String? product) =>
-    vendor == 'Suunto' && (product == 'Nautic' || product == 'Ocean');
+///
+/// Accepts both the libdivecomputer descriptor name (`Nautic` / `Ocean`) and
+/// the display name the Suunto Cloud import resolves (`Suunto Nautic` /
+/// `Suunto Nautic S` / `Suunto Ocean`).
+bool isSuuntoNauticFamily(String? vendor, String? product) {
+  if (vendor != 'Suunto' || product == null) return false;
+  final p = product.startsWith('Suunto ') ? product.substring(7) : product;
+  return p == 'Nautic' || p == 'Nautic S' || p == 'Ocean';
+}

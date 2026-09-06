@@ -651,4 +651,119 @@ void main() {
       expect(byIndex[1]!.o2Percent, closeTo(50.0, 1e-9));
     });
   });
+
+  group('full dive-event extraction (issue #1523)', () {
+    Map<String, dynamic> nauticHeader() => {
+      'DateTime': '2026-08-26T13:48:11Z',
+      'ActivityType': 51,
+      'Device': {'Name': 'Vaasa'},
+      'DiveTime': 2255,
+    };
+
+    Map<String, dynamic> eventSample(String iso, Map<String, dynamic> event) =>
+        {
+          'TimeISO8601': iso,
+          'Depth': 12.0,
+          'Events': [
+            {
+              'State': {'Active': true, 'Type': 'Dive Active'},
+            },
+            event,
+          ],
+        };
+
+    test(
+      'emits the Alarm / Warning / State events the old importer dropped',
+      () {
+        final result = SuuntoDiveParser.parse(
+          header: nauticHeader(),
+          samples: [
+            eventSample('2026-08-26T13:48:11Z', const {
+              'State': {'Active': true, 'Type': 'Dive Active'},
+            }),
+            eventSample('2026-08-26T13:54:27Z', const {
+              'Warning': {'Active': true, 'Type': 'NoDecoTime'},
+            }),
+            eventSample('2026-08-26T14:01:54Z', const {
+              'State': {'Active': true, 'Type': 'Ndl exceeded'},
+            }),
+            eventSample('2026-08-26T14:06:01Z', const {
+              'Alarm': {'Active': true, 'Type': 'Ascent Speed'},
+            }),
+            eventSample('2026-08-26T14:09:40Z', const {
+              'Notify': {'Active': true, 'Type': 'User Tank Pressure'},
+            }),
+            eventSample('2026-08-26T14:12:53Z', const {
+              'State': {'Active': true, 'Type': 'At Deco Stop'},
+            }),
+            eventSample('2026-08-26T14:16:28Z', const {
+              'State': {'Active': true, 'Type': 'At Safety Stop'},
+            }),
+          ],
+        );
+
+        final types = result.dive.events.map((e) => e.type).toList();
+        expect(types, contains('lowNoDecoTime'));
+        expect(types, contains('decompressionDive'));
+        expect(types, contains('ascent'));
+        expect(types, contains('airtime'));
+        expect(types, contains('deco'));
+        expect(types, contains('safetystop'));
+      },
+    );
+
+    test(
+      'carries the native (subgroup<<8|type) code in DownloadedEvent.value',
+      () {
+        final result = SuuntoDiveParser.parse(
+          header: nauticHeader(),
+          samples: [
+            eventSample('2026-08-26T14:06:01Z', const {
+              'Alarm': {'Active': true, 'Type': 'Ascent Speed'},
+            }),
+          ],
+        );
+        final ascent = result.dive.events.singleWhere(
+          (e) => e.type == 'ascent',
+        );
+        expect(ascent.value, (0x18 << 8) | 5);
+      },
+    );
+
+    test('a begin edge held across samples is emitted once', () {
+      final result = SuuntoDiveParser.parse(
+        header: nauticHeader(),
+        samples: [
+          eventSample('2026-08-26T14:06:01Z', const {
+            'Alarm': {'Active': true, 'Type': 'Ascent Speed'},
+          }),
+          eventSample('2026-08-26T14:06:11Z', const {
+            'Alarm': {'Active': true, 'Type': 'Ascent Speed'},
+          }),
+          eventSample('2026-08-26T14:06:21Z', const {
+            'Alarm': {'Active': false, 'Type': 'Ascent Speed'},
+          }),
+        ],
+      );
+      expect(result.dive.events.where((e) => e.type == 'ascent'), hasLength(1));
+    });
+
+    test('the same condition clearing and re-triggering is emitted again', () {
+      final result = SuuntoDiveParser.parse(
+        header: nauticHeader(),
+        samples: [
+          eventSample('2026-08-26T14:06:01Z', const {
+            'Alarm': {'Active': true, 'Type': 'Ascent Speed'},
+          }),
+          eventSample('2026-08-26T14:06:11Z', const {
+            'Alarm': {'Active': false, 'Type': 'Ascent Speed'},
+          }),
+          eventSample('2026-08-26T14:07:41Z', const {
+            'Alarm': {'Active': true, 'Type': 'Ascent Speed'},
+          }),
+        ],
+      );
+      expect(result.dive.events.where((e) => e.type == 'ascent'), hasLength(2));
+    });
+  });
 }

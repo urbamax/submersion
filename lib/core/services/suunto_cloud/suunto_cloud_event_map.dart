@@ -1,0 +1,84 @@
+/// Maps a Suunto cloud/app `sml` dive-event -- `DiveEvents.<Subgroup>.Type` as
+/// a descriptor string -- to the same representation the BLE download path
+/// produces: a libdivecomputer-style event-type string (consumed by
+/// `_mapEventTypeString`) plus the native `(sub-group << 8) | type` code
+/// (consumed by `suuntoNauticEventLabel` for the exact wording).
+///
+/// The string ⇄ code correspondence is `SUUNTO_NAUTIC_PROTOCOL.md` §9.4,
+/// decoded by latishab from the watch's own `/Descriptors`. It matches the
+/// tables in the libdivecomputer driver's `suunto_nautic_map_event`.
+///
+/// A cloud dive-event carries `Active: true` on its begin edge and, on some
+/// generations, `Active: false` on the end edge; only the begin edge is a
+/// marker (matching the driver, which emits begins only). The older
+/// `DiveEvents` *object* shape has no `Active` field -- treat it as a begin.
+library;
+
+/// The libdivecomputer event-type string and native code for one cloud event.
+class SuuntoCloudEvent {
+  const SuuntoCloudEvent(this.downloadedType, this.nativeCode);
+
+  /// A value `_mapEventTypeString` understands, or a bare `ProfileEventType`
+  /// name for events with no clean libdivecomputer equivalent (`cnsWarning`,
+  /// `cnsCritical`, `missedStop`, `lowNoDecoTime`, `decompressionDive`).
+  final String downloadedType;
+
+  /// `(sub-group << 8) | type`, for `suuntoNauticEventLabel`.
+  final int nativeCode;
+}
+
+const int _alarm = 0x18;
+const int _warning = 0x19;
+const int _notify = 0x1A;
+const int _state = 0x1B;
+const int _ooam = 0x1D;
+
+/// `subgroup key` → (`Type` string → mapping). Types deliberately left out
+/// (Battery, Sidemount, "... Ahead" predictive states, Recovery time,
+/// Setpoint on an OC watch, bearings/stopwatch) resolve to `null` and are not
+/// imported -- the same as the driver mapping them to `SAMPLE_EVENT_NONE`.
+const Map<String, Map<String, SuuntoCloudEvent>> _table = {
+  'Alarm': {
+    'PO2 Low': SuuntoCloudEvent('PO2', (_alarm << 8) | 1),
+    'PO2 High': SuuntoCloudEvent('PO2', (_alarm << 8) | 2),
+    'Tank Pressure': SuuntoCloudEvent('airtime', (_alarm << 8) | 3),
+    'Gas Time': SuuntoCloudEvent('airtime', (_alarm << 8) | 4),
+    'Ascent Speed': SuuntoCloudEvent('ascent', (_alarm << 8) | 5),
+    'Ascent too fast': SuuntoCloudEvent('ascent', (_alarm << 8) | 5),
+    'CNS100%': SuuntoCloudEvent('cnsCritical', (_alarm << 8) | 7),
+    'OTU300': SuuntoCloudEvent('cnsCritical', (_alarm << 8) | 8),
+    'Deco Stop Broken': SuuntoCloudEvent('ceiling', (_alarm << 8) | 10),
+    'Deep Stop Broken': SuuntoCloudEvent('deepstop', (_alarm << 8) | 12),
+    'Safety Stop Broken': SuuntoCloudEvent('missedStop', (_alarm << 8) | 13),
+  },
+  'Warning': {
+    'User PO2 High': SuuntoCloudEvent('PO2', (_warning << 8) | 6),
+    'CNS80%': SuuntoCloudEvent('cnsWarning', (_warning << 8) | 14),
+    'OTU250': SuuntoCloudEvent('cnsWarning', (_warning << 8) | 15),
+    'NoDecoTime': SuuntoCloudEvent('lowNoDecoTime', (_warning << 8) | 20),
+    'User Tank Pressure': SuuntoCloudEvent('airtime', (_warning << 8) | 28),
+    'User Gas Time': SuuntoCloudEvent('airtime', (_warning << 8) | 29),
+  },
+  'State': {
+    'Ndl exceeded': SuuntoCloudEvent('decompressionDive', (_state << 8) | 19),
+    'At Deco Stop': SuuntoCloudEvent('deco', (_state << 8) | 35),
+    'At Deep Stop': SuuntoCloudEvent('deepstop', (_state << 8) | 36),
+    'At Safety Stop': SuuntoCloudEvent('safetystop', (_state << 8) | 37),
+  },
+  'Notify': {
+    'Gas Switch': SuuntoCloudEvent('gaschange', (_notify << 8) | 11),
+    'User Tank Pressure': SuuntoCloudEvent('airtime', (_notify << 8) | 28),
+    'User Gas Time': SuuntoCloudEvent('airtime', (_notify << 8) | 29),
+    // Some generations announce a safety stop through Notify rather than State.
+    'Safety Stop': SuuntoCloudEvent('safetystop', (_state << 8) | 37),
+  },
+  'Ooam': {'Ceiling broken': SuuntoCloudEvent('ceiling', (_ooam << 8) | 2)},
+};
+
+/// Looks up a cloud dive-event. [subgroup] is the JSON key
+/// (`Alarm`/`Warning`/`Notify`/`State`/`Ooam`); [type] is its `Type` string.
+/// Returns `null` for an unknown or deliberately-unimported event.
+SuuntoCloudEvent? suuntoCloudEvent(String subgroup, String? type) {
+  if (type == null) return null;
+  return _table[subgroup]?[type];
+}
