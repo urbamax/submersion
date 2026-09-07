@@ -91,6 +91,9 @@ class Dive extends Equatable {
   // Decompression algorithm and conservatism
   final String? decoAlgorithm; // "buhlmann", "vpm", "rgbm", "dciem"
   final int? decoConservatism; // Personal adjustment (0=neutral)
+  // The computer's configured working ppO2 ceiling in bar (Suunto Nautic).
+  // Null falls back to the app's ppO2MaxWorking setting.
+  final double? ppO2Working;
   // Dive computer that logged this dive
   final String? diveComputerModel;
   final String? diveComputerSerial;
@@ -232,6 +235,7 @@ class Dive extends Equatable {
     this.gradientFactorHigh,
     this.decoAlgorithm,
     this.decoConservatism,
+    this.ppO2Working,
     this.diveComputerModel,
     this.diveComputerSerial,
     this.diveComputerFirmware,
@@ -616,6 +620,7 @@ class Dive extends Equatable {
     int? gradientFactorHigh,
     String? decoAlgorithm,
     int? decoConservatism,
+    double? ppO2Working,
     String? diveComputerModel,
     String? diveComputerSerial,
     String? diveComputerFirmware,
@@ -713,6 +718,7 @@ class Dive extends Equatable {
       gradientFactorHigh: gradientFactorHigh ?? this.gradientFactorHigh,
       decoAlgorithm: decoAlgorithm ?? this.decoAlgorithm,
       decoConservatism: decoConservatism ?? this.decoConservatism,
+      ppO2Working: ppO2Working ?? this.ppO2Working,
       diveComputerModel: diveComputerModel ?? this.diveComputerModel,
       diveComputerSerial: diveComputerSerial ?? this.diveComputerSerial,
       diveComputerFirmware: diveComputerFirmware ?? this.diveComputerFirmware,
@@ -813,6 +819,7 @@ class Dive extends Equatable {
     gradientFactorHigh,
     decoAlgorithm,
     decoConservatism,
+    ppO2Working,
     diveComputerModel,
     diveComputerSerial,
     diveComputerFirmware,

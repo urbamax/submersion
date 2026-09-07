@@ -242,6 +242,7 @@ class DiveConsolidationService {
                   decoAlgorithm: Value(secRow.decoAlgorithm),
                   gradientFactorLow: Value(secRow.gradientFactorLow),
                   gradientFactorHigh: Value(secRow.gradientFactorHigh),
+                  ppO2Working: Value(secRow.ppO2Working),
                   importedAt: Value(nowDt),
                   createdAt: Value(nowDt),
                   timeOffsetSeconds: Value(offset),

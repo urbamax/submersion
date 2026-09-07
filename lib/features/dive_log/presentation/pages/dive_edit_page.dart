@@ -4983,6 +4983,7 @@ class _DiveEditPageState extends ConsumerState<DiveEditPage> {
         decoConservatism: _existingDive?.decoConservatism,
         gradientFactorLow: _existingDive?.gradientFactorLow,
         gradientFactorHigh: _existingDive?.gradientFactorHigh,
+        ppO2Working: _existingDive?.ppO2Working,
         weatherCode: _existingDive?.weatherCode,
         importId: _existingDive?.importId,
         surfaceInterval: _existingDive?.surfaceInterval,

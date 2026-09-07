@@ -373,6 +373,7 @@ ProfileAnalysisService _resolveAnalysisService(
   int? gradientFactorHigh, {
   DiveEnvironment environment = DiveEnvironment.standard,
   String? recordedAlgorithm,
+  double? divePpO2Working,
 }) {
   final gfSource = GradientFactorSource.resolve(
     diveGfLow: gradientFactorLow,
@@ -381,17 +382,24 @@ ProfileAnalysisService _resolveAnalysisService(
     settingsGfHigh: ref.watch(gfHighProvider),
     recordedAlgorithm: recordedAlgorithm,
   );
+  // The computer's own working ppO2 ceiling (Suunto Nautic /Summary) wins over
+  // the app setting for this dive, so its MOD / toxicity markers line up with
+  // what the watch flagged.
+  final double ppO2Working =
+      divePpO2Working ?? ref.watch(ppO2MaxWorkingProvider);
   // The shared, settings-configured service already stamps exactly this
   // source -- the diver's own gradient factors with no dive-recorded model to
-  // name -- so reuse it rather than building a per-dive copy.
+  // name -- so reuse it rather than building a per-dive copy. A dive-supplied
+  // ppO2 ceiling forces the per-dive copy too.
   if (environment == DiveEnvironment.standard &&
       gfSource.isFromDiverSettings &&
-      gfSource.recordedAlgorithm == null) {
+      gfSource.recordedAlgorithm == null &&
+      divePpO2Working == null) {
     return ref.watch(profileAnalysisServiceProvider);
   }
   return ProfileAnalysisService(
     gfSource: gfSource,
-    ppO2WarningThreshold: ref.watch(ppO2MaxWorkingProvider),
+    ppO2WarningThreshold: ppO2Working,
     ppO2CriticalThreshold: ref.watch(ppO2MaxDecoProvider),
     cnsWarningThreshold: ref.watch(cnsWarningThresholdProvider),
     ascentRateWarning: ref.watch(ascentRateWarningProvider),
@@ -1559,6 +1567,7 @@ final diveProfileAnalysisProvider = Provider.family<ProfileAnalysis?, Dive>((
         surfacePressureBar: dive.surfacePressure,
       ),
       recordedAlgorithm: dive.decoAlgorithm,
+      divePpO2Working: dive.ppO2Working,
     );
 
     // Extract profile data
