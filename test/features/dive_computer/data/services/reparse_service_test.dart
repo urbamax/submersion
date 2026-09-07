@@ -3146,6 +3146,83 @@ void main() {
         expect(result.failed, 0);
       },
     );
+
+    test('clears the stale safety review for every dive it successfully '
+        're-parses', () async {
+      // Same staleness as reparseDive (#1641), in the sibling bulk path:
+      // applyParsedUpdate can rewrite a dive's profile series without
+      // bumping SafetyReviewService.engineVersion, so a stored review at
+      // the current version is served back unchanged forever unless this
+      // loop drops it. A computer's sources span multiple dives, so both
+      // must be cleared, not just the first.
+      await insertComputer('comp-1');
+      await insertDive('dive-1');
+      await insertDive('dive-2');
+      await insertSourceWithRawData(
+        id: 'src-1',
+        diveId: 'dive-1',
+        computerId: 'comp-1',
+      );
+      await insertSourceWithRawData(
+        id: 'src-2',
+        diveId: 'dive-2',
+        computerId: 'comp-1',
+      );
+      for (final diveId in ['dive-1', 'dive-2']) {
+        await db
+            .into(db.diveSafetyReviews)
+            .insert(
+              DiveSafetyReviewsCompanion.insert(
+                diveId: diveId,
+                engineVersion: 2,
+                reviewedAt: nowMs,
+              ),
+            );
+      }
+
+      final result = await service.reparseAllForComputer(
+        'comp-1',
+        parseFn: fakeParseFn,
+      );
+
+      expect(result.succeeded, 2);
+      final remaining = await db.select(db.diveSafetyReviews).get();
+      expect(remaining, isEmpty);
+    });
+
+    test('leaves a dive\'s safety review untouched when its source fails to '
+        're-parse', () async {
+      await insertComputer('comp-1');
+      await insertDive('dive-1');
+      await insertSourceWithRawData(
+        id: 'src-1',
+        diveId: 'dive-1',
+        computerId: 'comp-1',
+        descriptorVendor: null,
+        descriptorProduct: null,
+        descriptorModel: null,
+      );
+      await db
+          .into(db.diveSafetyReviews)
+          .insert(
+            DiveSafetyReviewsCompanion.insert(
+              diveId: 'dive-1',
+              engineVersion: 2,
+              reviewedAt: nowMs,
+            ),
+          );
+
+      final result = await service.reparseAllForComputer(
+        'comp-1',
+        parseFn: fakeParseFn,
+      );
+
+      expect(result.failed, 1);
+      final review = await (db.select(
+        db.diveSafetyReviews,
+      )..where((t) => t.diveId.equals('dive-1'))).getSingleOrNull();
+      expect(review, isNotNull);
+    });
   });
 
   // ---------------------------------------------------------------------------

@@ -320,6 +320,7 @@ class ReparseService {
 
     int succeeded = 0;
     int failed = 0;
+    final succeededDiveIds = <String>{};
 
     for (final source in sources) {
       if (source.descriptorVendor == null ||
@@ -345,9 +346,25 @@ class ReparseService {
           libdivecomputerVersion: source.libdivecomputerVersion,
         );
         succeeded++;
+        succeededDiveIds.add(source.diveId);
       } catch (e) {
         failed++;
       }
+    }
+
+    // Same staleness as ReparseService.reparseDive (#1641), in the sibling
+    // bulk-by-computer path: this loop can rewrite several dives' profile
+    // series without bumping SafetyReviewService.engineVersion, so each
+    // affected dive's stored review must be dropped for the next view to
+    // recompute it. A computer's sources can span many dives, so this
+    // clears once per distinct dive rather than once per source.
+    final syncRepository = SyncRepository(database: db);
+    for (final diveId in succeededDiveIds) {
+      await SafetyFindingsRepository.clearReviewForDive(
+        db,
+        syncRepository,
+        diveId,
+      );
     }
 
     return (succeeded: succeeded, failed: failed);
