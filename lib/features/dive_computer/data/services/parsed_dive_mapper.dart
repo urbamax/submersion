@@ -55,6 +55,7 @@ DownloadedDive parsedDiveToDownloaded(
     gfLow: parsed.gfLow,
     gfHigh: parsed.gfHigh,
     decoConservatism: parsed.decoConservatism,
+    ppO2Working: parsed.ppO2MaxBar,
     diveMode: DiveMode.fromCode(mapLibdcDiveModeCode(parsed.diveMode)),
     profile: parsed.samples
         .map(

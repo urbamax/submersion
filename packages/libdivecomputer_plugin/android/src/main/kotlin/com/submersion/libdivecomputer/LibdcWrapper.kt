@@ -83,6 +83,7 @@ object LibdcWrapper {
 
     // Decompression model access
     external fun nativeGetDiveDecoModel(divePtr: Long): IntArray?
+    external fun nativeGetDivePpo2Max(divePtr: Long): Double
 
     // Raw dive data access
     external fun nativeGetDiveRawData(divePtr: Long): ByteArray?

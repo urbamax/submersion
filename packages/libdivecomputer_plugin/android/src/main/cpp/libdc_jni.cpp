@@ -1153,6 +1153,15 @@ Java_com_submersion_libdivecomputer_LibdcWrapper_nativeGetDiveDecoModel(
     return result;
 }
 
+// The diver's configured working ppO2 ceiling in bar (Suunto Nautic /Summary),
+// or NaN when the computer does not report it.
+extern "C" JNIEXPORT jdouble JNICALL
+Java_com_submersion_libdivecomputer_LibdcWrapper_nativeGetDivePpo2Max(
+    JNIEnv *, jclass, jlong divePtr) {
+    auto *dive = reinterpret_cast<const libdc_parsed_dive_t *>(divePtr);
+    return dive->ppo2_max;
+}
+
 // ============================================================
 // Raw Dive Data Access
 // ============================================================

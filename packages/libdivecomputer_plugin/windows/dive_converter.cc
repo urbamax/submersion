@@ -291,6 +291,12 @@ ParsedDive ConvertParsedDive(const libdc_parsed_dive_t& dive) {
             : std::optional<int64_t>(
                   static_cast<int64_t>(dive.deco_conservatism));
 
+    // Configured working ppO2 ceiling (Suunto Nautic /Summary): NaN -> null.
+    std::optional<double> ppo2_max =
+        std::isnan(dive.ppo2_max)
+            ? std::nullopt
+            : std::optional<double>(dive.ppo2_max);
+
     // Copy raw dive data bytes if available.
     std::optional<std::vector<uint8_t>> raw_data;
     if (dive.raw_data != nullptr && dive.raw_data_size > 0) {
@@ -330,7 +336,8 @@ ParsedDive ConvertParsedDive(const libdc_parsed_dive_t& dive) {
         entry_lat ? &*entry_lat : nullptr,
         entry_lon ? &*entry_lon : nullptr,
         exit_lat ? &*exit_lat : nullptr,
-        exit_lon ? &*exit_lon : nullptr);
+        exit_lon ? &*exit_lon : nullptr,
+        ppo2_max ? &*ppo2_max : nullptr);
 }
 
 }  // namespace libdivecomputer_plugin

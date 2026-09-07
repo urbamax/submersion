@@ -365,7 +365,8 @@ data class ParsedDive (
   val entryLatitude: Double? = null,
   val entryLongitude: Double? = null,
   val exitLatitude: Double? = null,
-  val exitLongitude: Double? = null
+  val exitLongitude: Double? = null,
+  val ppO2MaxBar: Double? = null
 )
  {
   companion object {
@@ -398,7 +399,8 @@ data class ParsedDive (
       val entryLongitude = pigeonVar_list[25] as Double?
       val exitLatitude = pigeonVar_list[26] as Double?
       val exitLongitude = pigeonVar_list[27] as Double?
-      return ParsedDive(fingerprint, dateTimeYear, dateTimeMonth, dateTimeDay, dateTimeHour, dateTimeMinute, dateTimeSecond, dateTimeTimezoneOffset, maxDepthMeters, avgDepthMeters, durationSeconds, minTemperatureCelsius, maxTemperatureCelsius, samples, tanks, gasMixes, events, diveMode, decoAlgorithm, gfLow, gfHigh, decoConservatism, rawData, rawFingerprint, entryLatitude, entryLongitude, exitLatitude, exitLongitude)
+      val ppO2MaxBar = pigeonVar_list[28] as Double?
+      return ParsedDive(fingerprint, dateTimeYear, dateTimeMonth, dateTimeDay, dateTimeHour, dateTimeMinute, dateTimeSecond, dateTimeTimezoneOffset, maxDepthMeters, avgDepthMeters, durationSeconds, minTemperatureCelsius, maxTemperatureCelsius, samples, tanks, gasMixes, events, diveMode, decoAlgorithm, gfLow, gfHigh, decoConservatism, rawData, rawFingerprint, entryLatitude, entryLongitude, exitLatitude, exitLongitude, ppO2MaxBar)
     }
   }
   fun toList(): List<Any?> {
@@ -431,6 +433,7 @@ data class ParsedDive (
       entryLongitude,
       exitLatitude,
       exitLongitude,
+      ppO2MaxBar,
     )
   }
 }

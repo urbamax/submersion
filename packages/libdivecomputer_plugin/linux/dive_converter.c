@@ -280,6 +280,10 @@ LibdivecomputerPluginParsedDive* convert_parsed_dive(
     int64_t* conservatism =
         (dive->deco_conservatism == 0) ? NULL : &conserv_val;
 
+    // Configured working ppO2 ceiling (Suunto Nautic /Summary): NaN -> NULL.
+    double ppo2_max_val = dive->ppo2_max;
+    double* ppo2_max = isnan(ppo2_max_val) ? NULL : &ppo2_max_val;
+
     // Raw dive data: pass pointer and length (NULL/0 if not available).
     const uint8_t* raw_data =
         (dive->raw_data != NULL && dive->raw_data_size > 0)
@@ -300,7 +304,7 @@ LibdivecomputerPluginParsedDive* convert_parsed_dive(
             (int64_t)dive->duration, min_temp, max_temp, samples, tanks,
             gas_mixes, events, dive_mode, deco_algorithm, gf_low, gf_high,
             conservatism, raw_data, raw_data_length, raw_fp, raw_fp_length,
-            entry_lat, entry_lon, exit_lat, exit_lon);
+            entry_lat, entry_lon, exit_lat, exit_lon, ppo2_max);
 
     fl_value_unref(samples);
     fl_value_unref(gas_mixes);

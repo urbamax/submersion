@@ -1137,6 +1137,7 @@ struct _LibdivecomputerPluginParsedDive {
   double* entry_longitude;
   double* exit_latitude;
   double* exit_longitude;
+  double* ppo2_max_bar;
 };
 
 G_DEFINE_TYPE(LibdivecomputerPluginParsedDive, libdivecomputer_plugin_parsed_dive, G_TYPE_OBJECT)
@@ -1160,6 +1161,7 @@ static void libdivecomputer_plugin_parsed_dive_dispose(GObject* object) {
   g_clear_pointer(&self->entry_longitude, g_free);
   g_clear_pointer(&self->exit_latitude, g_free);
   g_clear_pointer(&self->exit_longitude, g_free);
+  g_clear_pointer(&self->ppo2_max_bar, g_free);
   G_OBJECT_CLASS(libdivecomputer_plugin_parsed_dive_parent_class)->dispose(object);
 }
 
@@ -1170,7 +1172,7 @@ static void libdivecomputer_plugin_parsed_dive_class_init(LibdivecomputerPluginP
   G_OBJECT_CLASS(klass)->dispose = libdivecomputer_plugin_parsed_dive_dispose;
 }
 
-LibdivecomputerPluginParsedDive* libdivecomputer_plugin_parsed_dive_new(const gchar* fingerprint, int64_t date_time_year, int64_t date_time_month, int64_t date_time_day, int64_t date_time_hour, int64_t date_time_minute, int64_t date_time_second, int64_t* date_time_timezone_offset, double max_depth_meters, double avg_depth_meters, int64_t duration_seconds, double* min_temperature_celsius, double* max_temperature_celsius, FlValue* samples, FlValue* tanks, FlValue* gas_mixes, FlValue* events, const gchar* dive_mode, const gchar* deco_algorithm, int64_t* gf_low, int64_t* gf_high, int64_t* deco_conservatism, const uint8_t* raw_data, size_t raw_data_length, const uint8_t* raw_fingerprint, size_t raw_fingerprint_length, double* entry_latitude, double* entry_longitude, double* exit_latitude, double* exit_longitude) {
+LibdivecomputerPluginParsedDive* libdivecomputer_plugin_parsed_dive_new(const gchar* fingerprint, int64_t date_time_year, int64_t date_time_month, int64_t date_time_day, int64_t date_time_hour, int64_t date_time_minute, int64_t date_time_second, int64_t* date_time_timezone_offset, double max_depth_meters, double avg_depth_meters, int64_t duration_seconds, double* min_temperature_celsius, double* max_temperature_celsius, FlValue* samples, FlValue* tanks, FlValue* gas_mixes, FlValue* events, const gchar* dive_mode, const gchar* deco_algorithm, int64_t* gf_low, int64_t* gf_high, int64_t* deco_conservatism, const uint8_t* raw_data, size_t raw_data_length, const uint8_t* raw_fingerprint, size_t raw_fingerprint_length, double* entry_latitude, double* entry_longitude, double* exit_latitude, double* exit_longitude, double* ppo2_max_bar) {
   LibdivecomputerPluginParsedDive* self = LIBDIVECOMPUTER_PLUGIN_PARSED_DIVE(g_object_new(libdivecomputer_plugin_parsed_dive_get_type(), nullptr));
   self->fingerprint = g_strdup(fingerprint);
   self->date_time_year = date_time_year;
@@ -1283,6 +1285,13 @@ LibdivecomputerPluginParsedDive* libdivecomputer_plugin_parsed_dive_new(const gc
   }
   else {
     self->exit_longitude = nullptr;
+  }
+  if (ppo2_max_bar != nullptr) {
+    self->ppo2_max_bar = static_cast<double*>(malloc(sizeof(double)));
+    *self->ppo2_max_bar = *ppo2_max_bar;
+  }
+  else {
+    self->ppo2_max_bar = nullptr;
   }
   return self;
 }
@@ -1429,6 +1438,11 @@ double* libdivecomputer_plugin_parsed_dive_get_exit_longitude(LibdivecomputerPlu
   return self->exit_longitude;
 }
 
+double* libdivecomputer_plugin_parsed_dive_get_ppo2_max_bar(LibdivecomputerPluginParsedDive* self) {
+  g_return_val_if_fail(LIBDIVECOMPUTER_PLUGIN_IS_PARSED_DIVE(self), nullptr);
+  return self->ppo2_max_bar;
+}
+
 static FlValue* libdivecomputer_plugin_parsed_dive_to_list(LibdivecomputerPluginParsedDive* self) {
   FlValue* values = fl_value_new_list();
   fl_value_append_take(values, fl_value_new_string(self->fingerprint));
@@ -1459,6 +1473,7 @@ static FlValue* libdivecomputer_plugin_parsed_dive_to_list(LibdivecomputerPlugin
   fl_value_append_take(values, self->entry_longitude != nullptr ? fl_value_new_float(*self->entry_longitude) : fl_value_new_null());
   fl_value_append_take(values, self->exit_latitude != nullptr ? fl_value_new_float(*self->exit_latitude) : fl_value_new_null());
   fl_value_append_take(values, self->exit_longitude != nullptr ? fl_value_new_float(*self->exit_longitude) : fl_value_new_null());
+  fl_value_append_take(values, self->ppo2_max_bar != nullptr ? fl_value_new_float(*self->ppo2_max_bar) : fl_value_new_null());
   return values;
 }
 
@@ -1585,7 +1600,14 @@ static LibdivecomputerPluginParsedDive* libdivecomputer_plugin_parsed_dive_new_f
     exit_longitude_value = fl_value_get_float(value27);
     exit_longitude = &exit_longitude_value;
   }
-  return libdivecomputer_plugin_parsed_dive_new(fingerprint, date_time_year, date_time_month, date_time_day, date_time_hour, date_time_minute, date_time_second, date_time_timezone_offset, max_depth_meters, avg_depth_meters, duration_seconds, min_temperature_celsius, max_temperature_celsius, samples, tanks, gas_mixes, events, dive_mode, deco_algorithm, gf_low, gf_high, deco_conservatism, raw_data, raw_data_length, raw_fingerprint, raw_fingerprint_length, entry_latitude, entry_longitude, exit_latitude, exit_longitude);
+  FlValue* value28 = fl_value_get_list_value(values, 28);
+  double* ppo2_max_bar = nullptr;
+  double ppo2_max_bar_value;
+  if (fl_value_get_type(value28) != FL_VALUE_TYPE_NULL) {
+    ppo2_max_bar_value = fl_value_get_float(value28);
+    ppo2_max_bar = &ppo2_max_bar_value;
+  }
+  return libdivecomputer_plugin_parsed_dive_new(fingerprint, date_time_year, date_time_month, date_time_day, date_time_hour, date_time_minute, date_time_second, date_time_timezone_offset, max_depth_meters, avg_depth_meters, duration_seconds, min_temperature_celsius, max_temperature_celsius, samples, tanks, gas_mixes, events, dive_mode, deco_algorithm, gf_low, gf_high, deco_conservatism, raw_data, raw_data_length, raw_fingerprint, raw_fingerprint_length, entry_latitude, entry_longitude, exit_latitude, exit_longitude, ppo2_max_bar);
 }
 
 struct _LibdivecomputerPluginDownloadProgress {

@@ -203,6 +203,7 @@ class ParsedDive {
     this.entryLongitude,
     this.exitLatitude,
     this.exitLongitude,
+    this.ppO2MaxBar,
   });
   final String fingerprint;
   final int dateTimeYear;
@@ -233,6 +234,11 @@ class ParsedDive {
   final double? entryLongitude;
   final double? exitLatitude;
   final double? exitLongitude;
+
+  /// The diver's configured working ppO2 ceiling in bar, as read from the
+  /// computer (Suunto Nautic /Summary). Null when the computer does not
+  /// report it. Appended last to keep the pigeon wire indices stable.
+  final double? ppO2MaxBar;
 }
 
 class DownloadProgress {

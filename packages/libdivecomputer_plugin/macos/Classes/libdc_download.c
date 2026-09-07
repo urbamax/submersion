@@ -551,6 +551,11 @@ static int extract_dive_fields(dc_parser_t *parser, libdc_parsed_dive_t *dive) {
         dive->gf_high = decomodel.params.gf.high;
     }
 
+    // Extract the diver's configured working ppO2 ceiling (Suunto Nautic).
+    if (dc_parser_get_field(parser, DC_FIELD_PPO2_MAX, 0, &dval) == DC_STATUS_SUCCESS) {
+        dive->ppo2_max = dval;
+    }
+
     // Extract GPS entry/exit fixes (Shearwater Swift). flags: 0=entry, 1=exit.
     // Patched libdivecomputer maps these to opening[9]/closing[9] record 9.
     // Families that report GPS per-sample instead are handled in
@@ -636,6 +641,7 @@ static int parse_dive(download_state_t *state,
     dive->deco_conservatism = 0;
     dive->gf_low = 0;
     dive->gf_high = 0;
+    dive->ppo2_max = NAN;
     dive->events = NULL;
     dive->event_count = 0;
     dive->event_capacity = 0;

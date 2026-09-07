@@ -407,6 +407,7 @@ class ParsedDive {
     this.entryLongitude,
     this.exitLatitude,
     this.exitLongitude,
+    this.ppO2MaxBar,
   });
 
   String fingerprint;
@@ -465,6 +466,8 @@ class ParsedDive {
 
   double? exitLongitude;
 
+  double? ppO2MaxBar;
+
   Object encode() {
     return <Object?>[
       fingerprint,
@@ -495,6 +498,7 @@ class ParsedDive {
       entryLongitude,
       exitLatitude,
       exitLongitude,
+      ppO2MaxBar,
     ];
   }
 
@@ -529,6 +533,7 @@ class ParsedDive {
       entryLongitude: result[25] as double?,
       exitLatitude: result[26] as double?,
       exitLongitude: result[27] as double?,
+      ppO2MaxBar: result[28] as double?,
     );
   }
 }

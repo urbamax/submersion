@@ -282,6 +282,7 @@ typedef struct {
     int deco_conservatism;         // personal adjustment (0 = neutral)
     unsigned int gf_low;           // gradient factor low 0-100 (0 if unknown)
     unsigned int gf_high;          // gradient factor high 0-100 (0 if unknown)
+    double ppo2_max;               // configured working ppO2 ceiling, bar (NAN if unknown)
 
     // Events (dynamically allocated)
     libdc_event_t *events;

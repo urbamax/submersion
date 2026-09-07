@@ -139,6 +139,10 @@ class DownloadedDive {
   /// Personal deco conservatism adjustment
   final int? decoConservatism;
 
+  /// The diver's configured working ppO2 ceiling in bar, as read from the
+  /// computer (Suunto Nautic). Null when the computer does not report it.
+  final double? ppO2Working;
+
   /// Dive events from the computer
   final List<DownloadedEvent> events;
 
@@ -171,6 +175,7 @@ class DownloadedDive {
     this.gfLow,
     this.gfHigh,
     this.decoConservatism,
+    this.ppO2Working,
     this.diveMode = DiveMode.oc,
     this.events = const [],
     this.rawData,
