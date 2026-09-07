@@ -1101,6 +1101,7 @@ class DiveComputerRepository {
     int? gfLow,
     int? gfHigh,
     int? decoConservatism,
+    double? ppO2Working,
     List<EventData>? events,
     List<GasSwitchData>? gasSwitches,
     int? diveNumber,
@@ -1227,6 +1228,7 @@ class DiveComputerRepository {
                 gradientFactorHigh: Value(gfHigh),
                 decoAlgorithm: Value(decoAlgorithm),
                 decoConservatism: Value(decoConservatism),
+                ppO2Working: Value(ppO2Working),
                 diveMode: Value(diveMode.code),
                 diveType: Value(diveTypeId),
                 createdAt: Value(now),
@@ -1337,6 +1339,7 @@ class DiveComputerRepository {
                 decoAlgorithm: Value(decoAlgorithm),
                 gradientFactorLow: Value(gfLow),
                 gradientFactorHigh: Value(gfHigh),
+                ppO2Working: Value(ppO2Working),
                 rawData: Value(rawData),
                 rawFingerprint: Value(rawFingerprint),
                 descriptorVendor: Value(descriptorVendor),
@@ -1653,6 +1656,7 @@ class DiveComputerRepository {
             gradientFactorHigh: Value(gfHigh),
             decoAlgorithm: Value(decoAlgorithm),
             decoConservatism: Value(decoConservatism),
+            ppO2Working: Value(ppO2Working),
           ),
         );
         await _syncRepository.markRecordPending(

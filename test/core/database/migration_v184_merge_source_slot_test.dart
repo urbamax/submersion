@@ -79,8 +79,7 @@ void main() {
     };
   }
 
-  test('v184 is the current schema version and is in the ladder', () {
-    expect(AppDatabase.currentSchemaVersion, 184);
+  test('v184 is in the migration ladder', () {
     expect(AppDatabase.migrationVersions, contains(184));
   });
 

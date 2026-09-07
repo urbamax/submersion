@@ -727,6 +727,10 @@ class Dives extends Table {
       text().nullable()(); // "buhlmann", "vpm", "rgbm", "dciem"
   IntColumn get decoConservatism =>
       integer().nullable()(); // Personal adjustment (0=neutral)
+  // The diver's configured working ppO2 ceiling in bar, as read from the
+  // computer (Suunto Nautic). Null when the computer does not report it;
+  // the oxygen-toxicity and MOD calculations fall back to the app setting.
+  RealColumn get ppO2Working => real().nullable()(); // bar
   // Dive computer that logged this dive (for display/export, separate from computerId relation)
   TextColumn get diveComputerModel => text().nullable()();
   TextColumn get diveComputerSerial => text().nullable()();
@@ -2584,6 +2588,9 @@ class DiveDataSources extends Table {
   TextColumn get decoAlgorithm => text().nullable()();
   IntColumn get gradientFactorLow => integer().nullable()();
   IntColumn get gradientFactorHigh => integer().nullable()();
+  // The computer's configured working ppO2 ceiling in bar (Suunto Nautic
+  // /Summary), mirrored from [Dives.ppO2Working] per source.
+  RealColumn get ppO2Working => real().nullable()();
   DateTimeColumn get importedAt => dateTime()();
   DateTimeColumn get createdAt => dateTime()();
   BlobColumn get rawData => blob().nullable()();
@@ -3353,7 +3360,7 @@ class AppDatabase extends _$AppDatabase {
 
   /// The current schema version as a static constant so that pre-open checks
   /// (e.g. version-mismatch guard) can reference it without an instance.
-  static const int currentSchemaVersion = 184;
+  static const int currentSchemaVersion = 185;
 
   /// The oldest schema whose reader can apply this build's sync payloads
   /// without loss or misinterpretation (the compatibility floor).
@@ -3791,6 +3798,9 @@ class AppDatabase extends _$AppDatabase {
     // display can collapse the halves of one dive back into one source.
     // Backfilled for dives combined before this rung shipped.
     184,
+    // v185: dives.pp_o2_working -- the diver's configured working ppO2 ceiling
+    // as read from the computer (Suunto Nautic /Summary).
+    185,
   ];
 
   /// Idempotent DDL for the v106 connector-suggestion columns (Lightroom
@@ -6004,6 +6014,22 @@ class AppDatabase extends _$AppDatabase {
       await customStatement(
         'ALTER TABLE dive_data_sources ADD COLUMN merge_source_slot INTEGER',
       );
+    }
+  }
+
+  /// v185 backstop: the `pp_o2_working` column (the computer's configured
+  /// working ppO2 ceiling, bar) on `dives` and `dive_data_sources`.
+  /// Self-guarding when a table is absent.
+  Future<void> _assertPpO2WorkingColumn() async {
+    for (final table in const ['dives', 'dive_data_sources']) {
+      final cols = await customSelect("PRAGMA table_info('$table')").get();
+      if (cols.isEmpty) continue;
+      final names = cols.map((c) => c.read<String>('name')).toSet();
+      if (!names.contains('pp_o2_working')) {
+        await customStatement(
+          'ALTER TABLE $table ADD COLUMN pp_o2_working REAL',
+        );
+      }
     }
   }
 
@@ -9905,6 +9931,10 @@ class AppDatabase extends _$AppDatabase {
           await _backfillMergeSourceSlots();
         }
         if (from < 184) await reportProgress();
+        // v185: the computer's configured working ppO2 ceiling, stored per dive
+        // next to the gradient factors (Suunto Nautic /Summary).
+        if (from < 185) await _assertPpO2WorkingColumn();
+        if (from < 185) await reportProgress();
       },
       beforeOpen: (details) async {
         // Enable foreign keys
@@ -10089,6 +10119,9 @@ class AppDatabase extends _$AppDatabase {
         // Reading any dive's sources throws without it. Only the column is
         // re-asserted here; the one-shot backfill belongs to the rung.
         await _assertDataSourceMergeSlotColumn();
+
+        // v185 backstop: re-assert dives.pp_o2_working (same self-heal).
+        await _assertPpO2WorkingColumn();
 
         // v160 backstop: re-assert service_kinds.default_category. A device
         // that reached 160 or higher through a parallel branch never enters
