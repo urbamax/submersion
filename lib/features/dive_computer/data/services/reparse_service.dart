@@ -8,6 +8,7 @@ import 'package:submersion/features/dive_computer/data/services/libdc_dive_mode.
 import 'package:submersion/features/dive_computer/domain/services/suunto_nautic_derived_events.dart';
 import 'package:submersion/features/dive_computer/domain/services/suunto_nautic_event_labels.dart';
 import 'package:submersion/features/dive_log/data/repositories/profile_series_repository.dart';
+import 'package:submersion/features/dive_log/data/repositories/safety_findings_repository.dart';
 import 'package:submersion/features/dive_log/data/repositories/tank_pressure_series_repository.dart';
 import 'package:submersion/features/dive_log/domain/codecs/profile_sample.dart'
     as codec;
@@ -373,6 +374,7 @@ class ReparseService {
     final sources = await getSourcesForDiveReparse(diveId);
     final errors = <String>[];
     var profilesPreserved = 0;
+    var anySucceeded = false;
 
     for (final source in sources) {
       if (source.descriptorVendor == null ||
@@ -397,9 +399,26 @@ class ReparseService {
           libdivecomputerVersion: source.libdivecomputerVersion,
         );
         if (outcome.profilePreserved) profilesPreserved++;
+        anySucceeded = true;
       } catch (e) {
         errors.add(e.toString());
       }
+    }
+
+    // A reparse can rewrite the profile series (new samples, corrected
+    // depths, ...) without bumping SafetyReviewService.engineVersion, so
+    // safetyReviewProvider's stored-review check never notices and keeps
+    // serving findings computed from the old, possibly wrong profile
+    // indefinitely. Drop the stored review so the next view recomputes it
+    // from the reparsed data, matching the other two paths that rewrite a
+    // dive's profile (DiveRepository.editProfile and a fresh download in
+    // DiveComputerRepository).
+    if (anySucceeded) {
+      await SafetyFindingsRepository.clearReviewForDive(
+        db,
+        SyncRepository(database: db),
+        diveId,
+      );
     }
 
     return (errors: errors, profilesPreserved: profilesPreserved);
