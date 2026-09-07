@@ -969,10 +969,10 @@ void main() {
                 ..where((t) => t.diveId.equals(diveId))
                 ..orderBy([(t) => OrderingTerm.asc(t.timestamp)]))
               .get();
-      expect(
-        events.map((e) => e.description),
-        ['Ascent rate alarm', 'Deco stop reached'],
-      );
+      expect(events.map((e) => e.description), [
+        'Ascent rate alarm',
+        'Deco stop reached',
+      ]);
     });
 
     test('a non-Nautic import leaves event description null', () async {
@@ -991,10 +991,9 @@ void main() {
         events: const [EventData(timestamp: 600, type: 'ascent', value: 6149)],
         forceNew: true,
       );
-      final row =
-          await (db.select(db.diveProfileEvents)
-                ..where((t) => t.diveId.equals(diveId)))
-              .getSingle();
+      final row = await (db.select(
+        db.diveProfileEvents,
+      )..where((t) => t.diveId.equals(diveId))).getSingle();
       expect(row.description, isNull);
     });
 
@@ -1021,10 +1020,10 @@ void main() {
                 ..where((t) => t.diveId.equals(diveId))
                 ..orderBy([(t) => OrderingTerm.asc(t.timestamp)]))
               .get();
-      expect(
-        events.map((e) => e.eventType),
-        ['lowNoDecoTime', 'decompressionDive'],
-      );
+      expect(events.map((e) => e.eventType), [
+        'lowNoDecoTime',
+        'decompressionDive',
+      ]);
       final lowNdl = events.first;
       expect(lowNdl.description, 'Low no-deco time');
       expect(lowNdl.value, 4.0); // 240 s -> 4 min

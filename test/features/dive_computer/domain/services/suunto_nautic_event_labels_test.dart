@@ -22,10 +22,13 @@ void main() {
       expect(suuntoNauticEventLabel(_code(0x19, 6)), 'High ppO2 warning');
     });
 
-    test('falls back to the sub-group name for an unknown alarm/warning type', () {
-      expect(suuntoNauticEventLabel(_code(0x18, 99)), 'Alarm');
-      expect(suuntoNauticEventLabel(_code(0x19, 99)), 'Warning');
-    });
+    test(
+      'falls back to the sub-group name for an unknown alarm/warning type',
+      () {
+        expect(suuntoNauticEventLabel(_code(0x18, 99)), 'Alarm');
+        expect(suuntoNauticEventLabel(_code(0x19, 99)), 'Warning');
+      },
+    );
 
     test('returns null for an unknown state/notify/ooam type', () {
       expect(suuntoNauticEventLabel(_code(0x1B, 99)), isNull);

@@ -636,17 +636,20 @@ void main() {
       expect(c.read(profileLegendProvider).allMetricsFromComputer, isTrue);
     });
 
-    test('seeds to calculated on a manual / file dive (no-op from default)', () {
-      final c = makeContainer();
-      c
-          .read(profileLegendProvider.notifier)
-          .seedMetricSourcePreference(isComputerDownload: false);
-      expect(c.read(profileLegendProvider).allMetricsFromComputer, isFalse);
-      expect(
-        c.read(profileLegendProvider).ndlSource,
-        MetricDataSource.calculated,
-      );
-    });
+    test(
+      'seeds to calculated on a manual / file dive (no-op from default)',
+      () {
+        final c = makeContainer();
+        c
+            .read(profileLegendProvider.notifier)
+            .seedMetricSourcePreference(isComputerDownload: false);
+        expect(c.read(profileLegendProvider).allMetricsFromComputer, isFalse);
+        expect(
+          c.read(profileLegendProvider).ndlSource,
+          MetricDataSource.calculated,
+        );
+      },
+    );
 
     test('a manual per-metric choice stops the seed', () {
       final c = makeContainer();

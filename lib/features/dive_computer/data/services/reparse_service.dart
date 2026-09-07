@@ -661,9 +661,7 @@ class ReparseService {
         depths: [for (final x in s) x.depthMeters],
         ndlSeconds: [
           for (final x in s)
-            x.decoType == 0
-                ? x.decoTime
-                : (x.decoType == null ? null : 0),
+            x.decoType == 0 ? x.decoTime : (x.decoType == null ? null : 0),
         ],
         ceilings: [for (final x in s) x.decoDepth],
       );

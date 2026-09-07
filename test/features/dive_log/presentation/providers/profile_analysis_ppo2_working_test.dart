@@ -87,17 +87,19 @@ void main() {
     return c;
   }
 
-  test('with no dive ppO2 ceiling, the 1.4 default flags time above the limit',
-      () {
-    final analysis = container().read(diveProfileAnalysisProvider(_dive()));
+  test(
+    'with no dive ppO2 ceiling, the 1.4 default flags time above the limit',
+    () {
+      final analysis = container().read(diveProfileAnalysisProvider(_dive()));
 
-    expect(analysis, isNotNull);
-    expect(
-      analysis!.o2Exposure.timeAboveWarning,
-      greaterThan(0),
-      reason: 'ppO2 ~1.47 sits above the 1.4 default',
-    );
-  });
+      expect(analysis, isNotNull);
+      expect(
+        analysis!.o2Exposure.timeAboveWarning,
+        greaterThan(0),
+        reason: 'ppO2 ~1.47 sits above the 1.4 default',
+      );
+    },
+  );
 
   test('the watch\'s 1.6 ceiling clears the same dive', () {
     final analysis = container().read(

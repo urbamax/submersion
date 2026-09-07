@@ -46,9 +46,7 @@ void main() {
     addTearDown(db.close);
 
     for (final table in ['dives', 'dive_data_sources']) {
-      final cols = await db
-          .customSelect("PRAGMA table_info('$table')")
-          .get();
+      final cols = await db.customSelect("PRAGMA table_info('$table')").get();
       final byName = {for (final c in cols) c.read<String>('name'): c};
       expect(byName.keys, contains('pp_o2_working'), reason: table);
       expect(byName['pp_o2_working']!.read<String>('type'), 'REAL');

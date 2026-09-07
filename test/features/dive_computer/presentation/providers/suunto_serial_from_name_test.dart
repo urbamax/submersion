@@ -63,7 +63,10 @@ void main() {
 
     test('passes a non-numeric string through', () {
       expect(
-        unpackSuuntoNauticFirmware(_device('Suunto Ocean 1234AB005678'), '3.1.0'),
+        unpackSuuntoNauticFirmware(
+          _device('Suunto Ocean 1234AB005678'),
+          '3.1.0',
+        ),
         '3.1.0',
       );
     });

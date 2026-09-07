@@ -6878,7 +6878,12 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
 
     return [
       for (var i = 0; i < kept.length; i++)
-        _eventVerticalLine(kept[i], labelTexts[i], labelByEvent[i], colorScheme),
+        _eventVerticalLine(
+          kept[i],
+          labelTexts[i],
+          labelByEvent[i],
+          colorScheme,
+        ),
     ];
   }
 

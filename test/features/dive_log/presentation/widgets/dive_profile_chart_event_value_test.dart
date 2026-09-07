@@ -37,9 +37,7 @@ List<AscentRatePoint> _rates() => List.generate(61, (i) {
     timestamp: t,
     depth: 20,
     rateMetersPerMin: rate,
-    category: rate > 10
-        ? AscentRateCategory.danger
-        : AscentRateCategory.safe,
+    category: rate > 10 ? AscentRateCategory.danger : AscentRateCategory.safe,
   );
 });
 
