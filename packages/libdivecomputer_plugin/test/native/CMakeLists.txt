@@ -368,6 +368,27 @@ if(WIN32)
     target_link_libraries(test_suunto_nautic_gas_switch PRIVATE SetupAPI.lib ws2_32.lib)
 endif()
 
+# The Suunto Nautic parser didn't answer DC_FIELD_DIVEMODE, so every dive
+# imported as freedive (the dc_divemode_t zero value). It now reads the
+# CHUNK_ACTIVITY sport id and defaults to OC.
+add_executable(test_suunto_nautic_dive_mode
+    test_suunto_nautic_dive_mode.c
+    ${WRAPPER_DIR}/libdc_wrapper.c
+    ${WRAPPER_DIR}/libdc_download.c
+    ${LIBDC_ALL_SOURCES}
+)
+target_include_directories(test_suunto_nautic_dive_mode PRIVATE
+    ${WRAPPER_DIR}
+    ${LIBDC_DIR}/include
+    ${LIBDC_DIR}/src
+    ${PLATFORM_CONFIG_DIR}
+)
+target_compile_definitions(test_suunto_nautic_dive_mode PRIVATE HAVE_CONFIG_H)
+if(WIN32)
+    target_compile_definitions(test_suunto_nautic_dive_mode PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(test_suunto_nautic_dive_mode PRIVATE SetupAPI.lib ws2_32.lib)
+endif()
+
 enable_testing()
 add_test(NAME test_dive_converter COMMAND test_dive_converter)
 add_test(NAME test_serial_callbacks COMMAND test_serial_callbacks)
@@ -392,3 +413,4 @@ add_test(NAME test_ratio_ix3m2_record_type COMMAND test_ratio_ix3m2_record_type)
 add_test(NAME test_cressi_leonardo_deco COMMAND test_cressi_leonardo_deco)
 add_test(NAME test_suunto_nautic_gps_clock COMMAND test_suunto_nautic_gps_clock)
 add_test(NAME test_suunto_nautic_gas_switch COMMAND test_suunto_nautic_gas_switch)
+add_test(NAME test_suunto_nautic_dive_mode COMMAND test_suunto_nautic_dive_mode)
