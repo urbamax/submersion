@@ -675,6 +675,33 @@ static int parse_dive(download_state_t *state,
 
     int result = extract_dive_fields(parser, dive);
 
+    // Suunto Nautic/Ocean: a dive with no surface GPS fix has no absolute
+    // clock in its own stream, so dc_parser_get_datetime returns
+    // DC_STATUS_UNSUPPORTED and extract_dive_fields leaves dive->year at its
+    // memset 0 -- which downstream (DateTime.utc(0, 0, 0, ...)) normalizes
+    // to a nonsense date, not an error a caller can catch. The driver's own
+    // suunto_nautic_parser_get_datetime documents the intended recovery:
+    // "the caller falls back to the logbook id (which is that same
+    // timestamp)". The logbook id is exactly this dive's fingerprint, a
+    // 4-byte little-endian Unix timestamp.
+    if (dive->year == 0 && fingerprint != NULL && fsize == 4 &&
+        dc_parser_get_type(parser) == DC_FAMILY_SUUNTO_NAUTIC) {
+        uint32_t epoch = (uint32_t)fingerprint[0] |
+                          ((uint32_t)fingerprint[1] << 8) |
+                          ((uint32_t)fingerprint[2] << 16) |
+                          ((uint32_t)fingerprint[3] << 24);
+        dc_datetime_t dt = {0};
+        if (dc_datetime_gmtime(&dt, (dc_ticks_t)epoch)) {
+            dive->year = dt.year;
+            dive->month = dt.month;
+            dive->day = dt.day;
+            dive->hour = dt.hour;
+            dive->minute = dt.minute;
+            dive->second = dt.second;
+            dive->timezone = dt.timezone;
+        }
+    }
+
     dc_parser_destroy(parser);
     return result;
 }
