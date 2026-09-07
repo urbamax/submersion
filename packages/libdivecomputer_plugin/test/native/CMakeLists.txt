@@ -346,6 +346,28 @@ if(WIN32)
     target_link_libraries(test_suunto_nautic_gps_clock PRIVATE SetupAPI.lib ws2_32.lib)
 endif()
 
+# Suunto Nautic #33 (multi-gas): the watch's "switch gas?" NOTIFY prompt (which
+# the diver can ignore) was mapped to SAMPLE_EVENT_GASCHANGE and surfaced as a
+# gas change to the bogus mix number (sub-group << 8 | type). Only the real
+# CHUNK_GAS_SWITCH should produce a gaschange.
+add_executable(test_suunto_nautic_gas_switch
+    test_suunto_nautic_gas_switch.c
+    ${WRAPPER_DIR}/libdc_wrapper.c
+    ${WRAPPER_DIR}/libdc_download.c
+    ${LIBDC_ALL_SOURCES}
+)
+target_include_directories(test_suunto_nautic_gas_switch PRIVATE
+    ${WRAPPER_DIR}
+    ${LIBDC_DIR}/include
+    ${LIBDC_DIR}/src
+    ${PLATFORM_CONFIG_DIR}
+)
+target_compile_definitions(test_suunto_nautic_gas_switch PRIVATE HAVE_CONFIG_H)
+if(WIN32)
+    target_compile_definitions(test_suunto_nautic_gas_switch PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(test_suunto_nautic_gas_switch PRIVATE SetupAPI.lib ws2_32.lib)
+endif()
+
 enable_testing()
 add_test(NAME test_dive_converter COMMAND test_dive_converter)
 add_test(NAME test_serial_callbacks COMMAND test_serial_callbacks)
@@ -369,3 +391,4 @@ add_test(NAME test_shearwater_o2_millivolt COMMAND test_shearwater_o2_millivolt
 add_test(NAME test_ratio_ix3m2_record_type COMMAND test_ratio_ix3m2_record_type)
 add_test(NAME test_cressi_leonardo_deco COMMAND test_cressi_leonardo_deco)
 add_test(NAME test_suunto_nautic_gps_clock COMMAND test_suunto_nautic_gps_clock)
+add_test(NAME test_suunto_nautic_gas_switch COMMAND test_suunto_nautic_gas_switch)
