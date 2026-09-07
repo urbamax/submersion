@@ -519,7 +519,7 @@ class Dive extends Equatable {
     final seconds = BottomTimeCalculator.secondsFromSamples([
       for (final point in profile)
         (timestamp: point.timestamp, depth: point.depth),
-    ]);
+    ], totalDurationSeconds: runtime?.inSeconds);
     return seconds == null ? null : Duration(seconds: seconds);
   }
 
