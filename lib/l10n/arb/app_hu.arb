@@ -10551,5 +10551,8 @@
   "diveComputer_detail_mergePickerSameSerial": "Azonos sorozatszam",
   "diveComputer_detail_duplicateBanner": "{name} ugyanazt a sorozatszamot jelzi. Lehet, hogy ez a szamitogep ketszer van elmentve.",
   "diveComputer_detail_duplicateBannerMultiple": "{count} masik mentett rekord ugyanazt a sorozatszamot jelzi. Lehet, hogy ez a szamitogep tobbszor van elmentve.",
-  "diveComputer_detail_duplicateBannerAction": "Osszevonas"
+  "diveComputer_detail_duplicateBannerAction": "Osszevonas",
+  "diveLog_legend_label_computedEvents": "Számított események",
+  "diveLog_legend_label_computerData": "Számítógép-adatok",
+  "settings_decompression_dataSources_useComputer": "A búvárkomputer előnyben részesítése"
 }

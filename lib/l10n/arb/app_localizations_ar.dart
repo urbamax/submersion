@@ -5794,10 +5794,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get diveLog_legend_label_events => 'الأحداث';
 
   @override
-  String get diveLog_legend_label_computedEvents => 'Computed events';
+  String get diveLog_legend_label_computedEvents => 'الأحداث المحسوبة';
 
   @override
-  String get diveLog_legend_label_computerData => 'Computer data';
+  String get diveLog_legend_label_computerData => 'بيانات الكمبيوتر';
 
   @override
   String get diveLog_legend_label_gasDensity => 'كثافة الغاز';
@@ -32671,7 +32671,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get settings_decompression_dataSources_useComputer =>
-      'Prefer the dive computer';
+      'تفضيل كمبيوتر الغوص';
 
   @override
   String get settings_decompression_ndlSource => 'مصدر NDL';

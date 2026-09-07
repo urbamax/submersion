@@ -10551,5 +10551,8 @@
   "diveComputer_detail_mergePickerSameSerial": "אותו מספר סידורי",
   "diveComputer_detail_duplicateBanner": "{name} מדווח על אותו מספר סידורי. ייתכן שזהו אותו מחשב שנשמר פעמיים.",
   "diveComputer_detail_duplicateBannerMultiple": "{count} רשומות שמורות נוספות מדווחות על אותו מספר סידורי. ייתכן שזהו אותו מחשב שנשמר יותר מפעם אחת.",
-  "diveComputer_detail_duplicateBannerAction": "מיזוג"
+  "diveComputer_detail_duplicateBannerAction": "מיזוג",
+  "diveLog_legend_label_computedEvents": "אירועים מחושבים",
+  "diveLog_legend_label_computerData": "נתוני מחשב",
+  "settings_decompression_dataSources_useComputer": "העדף את מחשב הצלילה"
 }

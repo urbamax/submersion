@@ -5899,10 +5899,10 @@ class AppLocalizationsHu extends AppLocalizations {
   String get diveLog_legend_label_events => 'Esemenyek';
 
   @override
-  String get diveLog_legend_label_computedEvents => 'Computed events';
+  String get diveLog_legend_label_computedEvents => 'Számított események';
 
   @override
-  String get diveLog_legend_label_computerData => 'Computer data';
+  String get diveLog_legend_label_computerData => 'Számítógép-adatok';
 
   @override
   String get diveLog_legend_label_gasDensity => 'Gaz suruseg';
@@ -32958,7 +32958,7 @@ class AppLocalizationsHu extends AppLocalizations {
 
   @override
   String get settings_decompression_dataSources_useComputer =>
-      'Prefer the dive computer';
+      'A búvárkomputer előnyben részesítése';
 
   @override
   String get settings_decompression_ndlSource => 'NDL forrása';

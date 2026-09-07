@@ -10551,5 +10551,8 @@
   "diveComputer_detail_mergePickerSameSerial": "Mismo número de serie",
   "diveComputer_detail_duplicateBanner": "{name} indica el mismo número de serie. Puede que este ordenador esté guardado dos veces.",
   "diveComputer_detail_duplicateBannerMultiple": "Otros {count} registros guardados indican el mismo número de serie. Puede que este ordenador esté guardado más de una vez.",
-  "diveComputer_detail_duplicateBannerAction": "Combinar"
+  "diveComputer_detail_duplicateBannerAction": "Combinar",
+  "diveLog_legend_label_computedEvents": "Eventos calculados",
+  "diveLog_legend_label_computerData": "Datos del ordenador",
+  "settings_decompression_dataSources_useComputer": "Preferir el ordenador de buceo"
 }

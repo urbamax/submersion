@@ -10551,5 +10551,8 @@
   "diveComputer_detail_mergePickerSameSerial": "Gleiche Seriennummer",
   "diveComputer_detail_duplicateBanner": "{name} meldet dieselbe Seriennummer. Möglicherweise ist dieser Computer doppelt gespeichert.",
   "diveComputer_detail_duplicateBannerMultiple": "{count} andere gespeicherte Einträge melden dieselbe Seriennummer. Möglicherweise ist dieser Computer mehrfach gespeichert.",
-  "diveComputer_detail_duplicateBannerAction": "Zusammenführen"
+  "diveComputer_detail_duplicateBannerAction": "Zusammenführen",
+  "diveLog_legend_label_computedEvents": "Berechnete Ereignisse",
+  "diveLog_legend_label_computerData": "Computerdaten",
+  "settings_decompression_dataSources_useComputer": "Tauchcomputer bevorzugen"
 }

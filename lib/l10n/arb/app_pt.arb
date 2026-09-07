@@ -10551,5 +10551,8 @@
   "diveComputer_detail_mergePickerSameSerial": "Mesmo número de série",
   "diveComputer_detail_duplicateBanner": "{name} informa o mesmo número de série. Pode ser este computador salvo duas vezes.",
   "diveComputer_detail_duplicateBannerMultiple": "Outros {count} registros salvos informam o mesmo número de série. Pode ser este computador salvo mais de uma vez.",
-  "diveComputer_detail_duplicateBannerAction": "Mesclar"
+  "diveComputer_detail_duplicateBannerAction": "Mesclar",
+  "diveLog_legend_label_computedEvents": "Eventos calculados",
+  "diveLog_legend_label_computerData": "Dados do computador",
+  "settings_decompression_dataSources_useComputer": "Preferir o computador de mergulho"
 }
