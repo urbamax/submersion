@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
@@ -524,6 +525,136 @@ void main() {
         expect(dive.exitLongitude, -157.0021);
       },
     );
+
+    test('reparseDive falls back to the stored fingerprint for a Suunto Nautic '
+        'dive with no absolute clock', () async {
+      // A Suunto Nautic/Ocean dive with no surface GPS fix has no absolute
+      // clock in its own stream: dc_parser_get_datetime returns
+      // UNSUPPORTED and the native side leaves year/month/day/etc at 0.
+      // DateTime.utc(0, 0, 0, ...) normalizes that to a nonsense date
+      // (year -1, November 30) instead of erroring. The fingerprint this
+      // source already has stored is the logbook id -- a 4-byte
+      // little-endian Unix timestamp -- and is the only correct source
+      // for the dive's date once a re-parse (no fresh fingerprint from the
+      // native call) hits this case.
+      await insertDive('dive-1');
+      await insertComputer('comp-1');
+      final now = DateTime.fromMillisecondsSinceEpoch(nowMs);
+      // 2026-08-26 01:21:13 UTC, matching the real report this regression
+      // is drawn from.
+      final expectedDate = DateTime.utc(2026, 8, 26, 1, 21, 13);
+      final epochSeconds = expectedDate.millisecondsSinceEpoch ~/ 1000;
+      final fingerprintBytes = Uint8List(4)
+        ..buffer.asByteData().setUint32(0, epochSeconds, Endian.little);
+      await db
+          .into(db.diveDataSources)
+          .insert(
+            DiveDataSourcesCompanion(
+              id: const Value('src-1'),
+              diveId: const Value('dive-1'),
+              computerId: const Value('comp-1'),
+              isPrimary: const Value(true),
+              sourceFormat: const Value('dive_computer'),
+              rawData: Value(Uint8List.fromList(List.filled(64, 0xAB))),
+              rawFingerprint: Value(fingerprintBytes),
+              descriptorVendor: const Value('Suunto'),
+              descriptorProduct: const Value('Ocean'),
+              descriptorModel: const Value(1),
+              libdivecomputerVersion: const Value('0.10.0'),
+              importedAt: Value(now),
+              createdAt: Value(now),
+            ),
+          );
+
+      Future<pigeon.ParsedDive> fakeParse(
+        String vendor,
+        String product,
+        int model,
+        Uint8List raw,
+      ) async {
+        return makeParsedDive(
+          year: 0,
+          month: 0,
+          day: 0,
+          hour: 0,
+          minute: 0,
+          second: 0,
+        );
+      }
+
+      final errors = (await service.reparseDive(
+        'dive-1',
+        parseFn: fakeParse,
+      )).errors;
+
+      expect(errors, isEmpty);
+      final dive = await getDive('dive-1');
+      expect(
+        DateTime.fromMillisecondsSinceEpoch(dive.diveDateTime, isUtc: true),
+        expectedDate,
+      );
+    });
+
+    test('reparseDive leaves an unparseable date alone for a non-Suunto-Nautic '
+        'source, even with a stored fingerprint', () async {
+      // The fingerprint fallback is scoped to the one family whose
+      // fingerprint is documented to be a raw Unix timestamp. Any other
+      // driver's fingerprint format is not necessarily that, so applying
+      // the same reinterpretation there would swap an obviously-wrong
+      // date for a plausible-looking wrong one.
+      await insertDive('dive-1');
+      await insertComputer('comp-1');
+      final now = DateTime.fromMillisecondsSinceEpoch(nowMs);
+      final fingerprintBytes = Uint8List(4)
+        ..buffer.asByteData().setUint32(0, 1788657673, Endian.little);
+      await db
+          .into(db.diveDataSources)
+          .insert(
+            DiveDataSourcesCompanion(
+              id: const Value('src-1'),
+              diveId: const Value('dive-1'),
+              computerId: const Value('comp-1'),
+              isPrimary: const Value(true),
+              sourceFormat: const Value('dive_computer'),
+              rawData: Value(Uint8List.fromList(List.filled(64, 0xAB))),
+              rawFingerprint: Value(fingerprintBytes),
+              descriptorVendor: const Value('Shearwater'),
+              descriptorProduct: const Value('Perdix'),
+              descriptorModel: const Value(5),
+              libdivecomputerVersion: const Value('0.9.0'),
+              importedAt: Value(now),
+              createdAt: Value(now),
+            ),
+          );
+
+      Future<pigeon.ParsedDive> fakeParse(
+        String vendor,
+        String product,
+        int model,
+        Uint8List raw,
+      ) async {
+        return makeParsedDive(
+          year: 0,
+          month: 0,
+          day: 0,
+          hour: 0,
+          minute: 0,
+          second: 0,
+        );
+      }
+
+      final errors = (await service.reparseDive(
+        'dive-1',
+        parseFn: fakeParse,
+      )).errors;
+
+      expect(errors, isEmpty);
+      final dive = await getDive('dive-1');
+      expect(
+        DateTime.fromMillisecondsSinceEpoch(dive.diveDateTime, isUtc: true),
+        isNot(DateTime.utc(2026, 8, 26, 1, 21, 13)),
+      );
+    });
 
     test(
       'reparseDive silently skips sources missing descriptor info',

@@ -77,6 +77,16 @@ class ReparseService {
     return db.transaction(() async {
       final now = DateTime.now();
 
+      // A fresh download supplies its own fingerprint via [rawFingerprint];
+      // a re-parse does not, so the datetime fallback in _parsedEntryTime
+      // falls back to whatever this source already has stored.
+      final fallbackFingerprint =
+          rawFingerprint ??
+          (await (db.select(
+                db.diveDataSources,
+              )..where((t) => t.id.equals(sourceRowId))).getSingleOrNull())
+              ?.rawFingerprint;
+
       // ------------------------------------------------------------------
       // 1. Update DiveDataSources snapshot fields
       // ------------------------------------------------------------------
@@ -89,6 +99,7 @@ class ReparseService {
         libdivecomputerVersion: libdivecomputerVersion,
         rawData: rawData,
         rawFingerprint: rawFingerprint,
+        fallbackFingerprint: fallbackFingerprint,
         now: now,
       ));
 
@@ -103,7 +114,14 @@ class ReparseService {
         // ----------------------------------------------------------------
         // 3. Update Dives row (allowlisted columns only)
         // ----------------------------------------------------------------
-        await _updateDiveRow(diveId: diveId, parsed: parsed, now: now);
+        await _updateDiveRow(
+          diveId: diveId,
+          parsed: parsed,
+          descriptorVendor: descriptorVendor,
+          descriptorProduct: descriptorProduct,
+          fallbackFingerprint: fallbackFingerprint,
+          now: now,
+        );
       }
 
       final sourceRows = await (db.select(
@@ -415,14 +433,52 @@ class ReparseService {
   /// Both the source row's provenance window and the dive row's own clock
   /// derive from this one expression so they cannot drift apart across a
   /// re-parse (#1207).
-  static DateTime _parsedEntryTime(pigeon.ParsedDive parsed) => DateTime.utc(
-    parsed.dateTimeYear,
-    parsed.dateTimeMonth,
-    parsed.dateTimeDay,
-    parsed.dateTimeHour,
-    parsed.dateTimeMinute,
-    parsed.dateTimeSecond,
-  );
+  ///
+  /// A Suunto Nautic/Ocean dive with no surface GPS fix has no absolute
+  /// clock in its own stream: [pigeon.ParsedDive.dateTimeYear] and its
+  /// siblings come back 0 (the native side's memset default -- see
+  /// `extract_dive_fields` in `libdc_download.c`), and `DateTime.utc(0, 0,
+  /// 0, ...)` normalizes that to a nonsense date (month/day 0 both roll
+  /// backward) instead of failing loudly. The driver's own family-level
+  /// fallback ("the caller falls back to the logbook id") already resolves
+  /// this for a fresh download, where the native fingerprint is on hand; a
+  /// re-parse has no fresh fingerprint, only whatever this source already
+  /// has stored, hence [fallbackFingerprint]. Scoped to this
+  /// one family: for every other driver a 0 fingerprint (`dateTimeYear ==
+  /// 0`) means the same thing (no clock, at the file level "return
+  /// UNSUPPORTED"), but that driver's fingerprint format is not
+  /// necessarily a Unix timestamp, so reinterpreting it as one would swap
+  /// an obviously-wrong date for a plausible-looking wrong one.
+  static DateTime _parsedEntryTime(
+    pigeon.ParsedDive parsed, {
+    String? descriptorVendor,
+    String? descriptorProduct,
+    Uint8List? fallbackFingerprint,
+  }) {
+    if (parsed.dateTimeYear == 0 &&
+        descriptorVendor == 'Suunto' &&
+        (descriptorProduct == 'Nautic' || descriptorProduct == 'Ocean') &&
+        fallbackFingerprint != null &&
+        fallbackFingerprint.length == 4) {
+      final epochSeconds =
+          fallbackFingerprint[0] |
+          (fallbackFingerprint[1] << 8) |
+          (fallbackFingerprint[2] << 16) |
+          (fallbackFingerprint[3] << 24);
+      return DateTime.fromMillisecondsSinceEpoch(
+        epochSeconds * 1000,
+        isUtc: true,
+      );
+    }
+    return DateTime.utc(
+      parsed.dateTimeYear,
+      parsed.dateTimeMonth,
+      parsed.dateTimeDay,
+      parsed.dateTimeHour,
+      parsed.dateTimeMinute,
+      parsed.dateTimeSecond,
+    );
+  }
 
   Future<void> _updateSourceRow({
     required String sourceRowId,
@@ -433,9 +489,15 @@ class ReparseService {
     required String? libdivecomputerVersion,
     required Uint8List? rawData,
     required Uint8List? rawFingerprint,
+    required Uint8List? fallbackFingerprint,
     required DateTime now,
   }) async {
-    final entryTime = _parsedEntryTime(parsed);
+    final entryTime = _parsedEntryTime(
+      parsed,
+      descriptorVendor: descriptorVendor,
+      descriptorProduct: descriptorProduct,
+      fallbackFingerprint: fallbackFingerprint,
+    );
     await (db.update(
       db.diveDataSources,
     )..where((t) => t.id.equals(sourceRowId))).write(
@@ -492,9 +554,17 @@ class ReparseService {
   Future<void> _updateDiveRow({
     required String diveId,
     required pigeon.ParsedDive parsed,
+    required String? descriptorVendor,
+    required String? descriptorProduct,
+    required Uint8List? fallbackFingerprint,
     required DateTime now,
   }) async {
-    final diveDateTimeMs = _parsedEntryTime(parsed).millisecondsSinceEpoch;
+    final diveDateTimeMs = _parsedEntryTime(
+      parsed,
+      descriptorVendor: descriptorVendor,
+      descriptorProduct: descriptorProduct,
+      fallbackFingerprint: fallbackFingerprint,
+    ).millisecondsSinceEpoch;
     final exitTimeMs = diveDateTimeMs + (parsed.durationSeconds * 1000);
     final bottomTimeSeconds = _calculateBottomTimeFromSamples(parsed.samples);
     final waterTemp = _minWaterTemp(parsed);
