@@ -2,12 +2,13 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:submersion/core/database/database.dart';
 
-/// v185: `dives.pp_o2_working`, the diver's configured working ppO2 ceiling in
+/// v192: `dives.pp_o2_working`, the diver's configured working ppO2 ceiling in
 /// bar as read from the computer (Suunto Nautic /Summary), stored per dive next
 /// to the gradient factors so the oxygen-toxicity and MOD calculations for that
-/// dive can honour the watch instead of the app default.
+/// dive can honour the watch instead of the app default. Renumbered from 185:
+/// main landed rungs 185-191 while this branch was open.
 void main() {
-  // Stamped at 184 so only the v185 step runs.
+  // Stamped at 184 so every rung up to and including v192 runs.
   NativeDatabase setupDb() => NativeDatabase.memory(
     setup: (rawDb) {
       rawDb.execute('PRAGMA user_version = 184');
@@ -35,9 +36,9 @@ void main() {
     },
   );
 
-  test('v185 is the current schema version and is in the ladder', () {
-    expect(AppDatabase.currentSchemaVersion, 185);
-    expect(AppDatabase.migrationVersions, contains(185));
+  test('v192 is the current schema version and is in the ladder', () {
+    expect(AppDatabase.currentSchemaVersion, 192);
+    expect(AppDatabase.migrationVersions, contains(192));
   });
 
   test('adds pp_o2_working to dives and dive_data_sources', () async {

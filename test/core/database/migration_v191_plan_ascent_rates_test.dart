@@ -29,11 +29,11 @@ const _columns = {
 };
 
 void main() {
-  test('v191 is the current schema version and is in the ladder', () {
-    // Renumbered from v188 (itself renumbered from v185 and v184): main
-    // landed the insurance-phone, media-equipment-link and raw-data
-    // recompression rungs at 188-190 while this branch was open.
-    expect(AppDatabase.currentSchemaVersion, 191);
+  test('v191 is present in the migration ladder', () {
+    // v191 is a past migration now: the suunto-nautic branch adds v192
+    // (dives.pp_o2_working) on top, so the latest-version tripwire moved to
+    // migration_v185_ppo2_working_test.dart. Assert membership, not equality.
+    expect(AppDatabase.currentSchemaVersion, greaterThanOrEqualTo(191));
     expect(AppDatabase.migrationVersions, contains(191));
   });
 
