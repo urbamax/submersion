@@ -323,6 +323,29 @@ if(WIN32)
     target_link_libraries(test_cressi_leonardo_deco PRIVATE SetupAPI.lib ws2_32.lib)
 endif()
 
+# submersion-libdc#1: a Suunto Nautic/Ocean GPS or GPS-accuracy chunk carries a
+# delta on its own back-dated sub-chain; read as a file-order delta it rewinds
+# the shared sample clock, the emitted sample goes backwards, and that then
+# wraps fill_missing_depths' unsigned time subtraction into a km-scale depth.
+# Drives a synthetic stream of the exact shape through the whole wrapper.
+add_executable(test_suunto_nautic_gps_clock
+    test_suunto_nautic_gps_clock.c
+    ${WRAPPER_DIR}/libdc_wrapper.c
+    ${WRAPPER_DIR}/libdc_download.c
+    ${LIBDC_ALL_SOURCES}
+)
+target_include_directories(test_suunto_nautic_gps_clock PRIVATE
+    ${WRAPPER_DIR}
+    ${LIBDC_DIR}/include
+    ${LIBDC_DIR}/src
+    ${PLATFORM_CONFIG_DIR}
+)
+target_compile_definitions(test_suunto_nautic_gps_clock PRIVATE HAVE_CONFIG_H)
+if(WIN32)
+    target_compile_definitions(test_suunto_nautic_gps_clock PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(test_suunto_nautic_gps_clock PRIVATE SetupAPI.lib ws2_32.lib)
+endif()
+
 enable_testing()
 add_test(NAME test_dive_converter COMMAND test_dive_converter)
 add_test(NAME test_serial_callbacks COMMAND test_serial_callbacks)
@@ -345,3 +368,4 @@ add_test(NAME test_shearwater_o2_millivolt COMMAND test_shearwater_o2_millivolt
 )
 add_test(NAME test_ratio_ix3m2_record_type COMMAND test_ratio_ix3m2_record_type)
 add_test(NAME test_cressi_leonardo_deco COMMAND test_cressi_leonardo_deco)
+add_test(NAME test_suunto_nautic_gps_clock COMMAND test_suunto_nautic_gps_clock)

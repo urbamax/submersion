@@ -426,6 +426,14 @@ static void fill_missing_depths(sample_state_t *state) {
                 double fraction = t1 > t0
                     ? (double)(dive->samples[j].time_ms - t0) / (double)(t1 - t0)
                     : 0.0;
+                // A sample whose time_ms falls outside [t0, t1] -- an
+                // out-of-order timestamp such as a Suunto Nautic GPS-chunk
+                // clock excursion (submersion-libdc#1) -- makes the unsigned
+                // subtraction above wrap to a huge value. An interpolated
+                // depth can never legitimately sit outside its two real
+                // bracketing readings, so clamp regardless of the cause.
+                if (fraction < 0.0) fraction = 0.0;
+                if (fraction > 1.0) fraction = 1.0;
                 dive->samples[j].depth = d0 + (d1 - d0) * fraction;
             }
         }
