@@ -389,6 +389,28 @@ if(WIN32)
     target_link_libraries(test_suunto_nautic_dive_mode PRIVATE SetupAPI.lib ws2_32.lib)
 endif()
 
+# The Suunto Nautic parser now decodes the water type from the /Summary
+# (DC_FIELD_SALINITY, byte +0x3E) and the per-sample gas time remaining from
+# the 0x16 cylinder array (DC_SAMPLE_RBT). Drives synthetic streams through
+# the parser API directly.
+add_executable(test_suunto_nautic_water_type
+    test_suunto_nautic_water_type.c
+    ${WRAPPER_DIR}/libdc_wrapper.c
+    ${WRAPPER_DIR}/libdc_download.c
+    ${LIBDC_ALL_SOURCES}
+)
+target_include_directories(test_suunto_nautic_water_type PRIVATE
+    ${WRAPPER_DIR}
+    ${LIBDC_DIR}/include
+    ${LIBDC_DIR}/src
+    ${PLATFORM_CONFIG_DIR}
+)
+target_compile_definitions(test_suunto_nautic_water_type PRIVATE HAVE_CONFIG_H)
+if(WIN32)
+    target_compile_definitions(test_suunto_nautic_water_type PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(test_suunto_nautic_water_type PRIVATE SetupAPI.lib ws2_32.lib)
+endif()
+
 enable_testing()
 add_test(NAME test_dive_converter COMMAND test_dive_converter)
 add_test(NAME test_serial_callbacks COMMAND test_serial_callbacks)
@@ -414,3 +436,4 @@ add_test(NAME test_cressi_leonardo_deco COMMAND test_cressi_leonardo_deco)
 add_test(NAME test_suunto_nautic_gps_clock COMMAND test_suunto_nautic_gps_clock)
 add_test(NAME test_suunto_nautic_gas_switch COMMAND test_suunto_nautic_gas_switch)
 add_test(NAME test_suunto_nautic_dive_mode COMMAND test_suunto_nautic_dive_mode)
+add_test(NAME test_suunto_nautic_water_type COMMAND test_suunto_nautic_water_type)
