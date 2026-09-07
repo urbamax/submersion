@@ -79,7 +79,11 @@ void main() {
     };
   }
 
-  test('v184 is in the migration ladder', () {
+  test('v184 is present in the migration ladder', () {
+    // v184 is now a past migration; the latest-version tripwire lives in the
+    // newest migration's test (migration_v191_plan_ascent_rates_test.dart),
+    // so assert membership rather than equality.
+    expect(AppDatabase.currentSchemaVersion, greaterThanOrEqualTo(184));
     expect(AppDatabase.migrationVersions, contains(184));
   });
 
