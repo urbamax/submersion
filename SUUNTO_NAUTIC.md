@@ -55,6 +55,14 @@ Then: **Import → dive computer → Bluetooth scan.** The watch advertises
 `Suunto Nautic <serial>` / `Suunto Ocean <serial>` and shows up as
 **Suunto / Nautic** (or Ocean).
 
+**Import from a file** (Transfer → Import data → pick the `.bin`): the raw
+`SBEM0103` log a download stores — the decompressed profile + `/Summary` —
+is recognised automatically and parsed through the same native
+libdivecomputer path a live download uses. The watch's own event wording
+comes through as labelled bookmarks (the download path also types them).
+Useful for replaying a capture someone sent you, or re-importing without
+the watch to hand.
+
 ## Known limitations
 
 - The tank-transmitter serial the Suunto app displays isn't shown (its value is

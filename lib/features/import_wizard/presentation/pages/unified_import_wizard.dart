@@ -8,8 +8,8 @@ import 'package:submersion/features/dive_log/presentation/providers/dive_compute
 import 'package:submersion/features/dive_log/presentation/providers/dive_providers.dart';
 import 'package:submersion/features/divers/presentation/providers/diver_providers.dart';
 import 'package:submersion/features/import_wizard/data/adapters/dive_computer_adapter.dart';
-import 'package:submersion/features/import_wizard/data/services/import_provider_invalidator.dart';
 import 'package:submersion/features/import_wizard/data/adapters/universal_adapter.dart';
+import 'package:submersion/features/import_wizard/data/services/import_provider_invalidator.dart';
 import 'package:submersion/features/import_wizard/domain/adapters/import_source_adapter.dart';
 import 'package:submersion/features/import_wizard/domain/models/import_bundle.dart';
 import 'package:submersion/features/import_wizard/domain/models/import_step_failure.dart';
@@ -345,6 +345,7 @@ class _UnifiedImportWizardBodyState
     // resolution) may have created a new record even when all dives were
     // skipped.
     if (widget.adapter.sourceType == ImportSourceType.diveComputer ||
+        widget.adapter.sourceType == ImportSourceType.universal ||
         widget.adapter.sourceType == ImportSourceType.suuntoCloud ||
         widget.adapter.sourceType == ImportSourceType.garminCloud) {
       ref.invalidate(allDiveComputersProvider);

@@ -59,6 +59,19 @@ void main() {
     });
   });
 
+  group('Binary detection - Suunto Nautic raw log', () {
+    test('an SBEM0103 file is detected as the raw Suunto Nautic format', () {
+      final bytes = Uint8List.fromList([
+        ...'SBEM0103'.codeUnits,
+        ...List<int>.filled(64, 0),
+      ]);
+      final result = detector.detect(bytes);
+      expect(result.format, ImportFormat.suuntoNauticRaw);
+      expect(result.sourceApp, SourceApp.suunto);
+      expect(result.isFormatSupported, isTrue);
+    });
+  });
+
   group('XML detection', () {
     test('detects UDDF root element', () {
       const xml = '<?xml version="1.0"?><uddf version="3.2.0"></uddf>';

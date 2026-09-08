@@ -14,6 +14,11 @@ enum ImportFormat {
   danDl7,
   ratioXml,
   sqlite,
+
+  /// A raw Suunto "Vaasa" generation (Nautic / Ocean) dive-log file. The
+  /// universal pipeline can't parse it; detecting it lets the wizard hand
+  /// off to the dive-computer file import instead of dead-ending.
+  suuntoNauticRaw,
   unknown;
 
   String get displayName => switch (this) {
@@ -31,6 +36,7 @@ enum ImportFormat {
     danDl7 => 'DAN DL7',
     ratioXml => 'Ratio XML',
     sqlite => 'SQLite Database',
+    suuntoNauticRaw => 'Suunto Nautic / Ocean',
     unknown => 'Unknown',
   };
 
@@ -44,7 +50,8 @@ enum ImportFormat {
     macdiveXml ||
     macdiveSqlite ||
     danDl7 ||
-    ratioXml => true,
+    ratioXml ||
+    suuntoNauticRaw => true,
     _ => false,
   };
 }
