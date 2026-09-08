@@ -46,7 +46,8 @@ static void put_u32le(unsigned char *p, unsigned int v) {
    `water_type` of 0xFF omits the salinity byte's meaning (leaves it 0 = fresh);
    pass 0..3 to exercise the mapping. */
 static unsigned int build_stream(unsigned char **out, unsigned int gastime_s,
-                                 unsigned int water_type, unsigned int hr_bpm) {
+                                 unsigned int water_type, unsigned int hr_bpm,
+                                 unsigned int surf_temp_cK, int gas_switch) {
     static unsigned char buf[512];
     unsigned char *p = buf;
 
@@ -56,10 +57,25 @@ static unsigned int build_stream(unsigned char **out, unsigned int gastime_s,
     *p++ = 0x1C; *p++ = 3;                      /* DIVE_STATE -> Diving */
     put_u16le(p, 0); p += 2; *p++ = 1;
 
+    if (surf_temp_cK) {                         /* 0x12 profile: temp (K*100) at +16 */
+        *p++ = 0x12; *p++ = 23;
+        unsigned char *pr = p;
+        memset(pr, 0, 23);
+        put_u16le(pr + 0, 100);                 /* delta */
+        put_u16le(pr + 16, (unsigned int)surf_temp_cK);
+        p += 23;
+    }
+
     if (hr_bpm) {                               /* 0x0F: [delta:2][hr:u8 bpm] */
         *p++ = 0x0F; *p++ = 3;
         put_u16le(p, 0); p += 2;
         *p++ = (unsigned char)hr_bpm;
+    }
+
+    if (gas_switch >= 0) {                      /* 0x1F: [delta:2][gasnum:i16 LE] */
+        *p++ = 0x1F; *p++ = 4;
+        put_u16le(p, 0); p += 2;
+        put_u16le(p, (unsigned int)gas_switch); p += 2;
     }
 
     /* 0x16 extended status: [delta:2][depth:f32 @2] ... cylinder array at +42,
@@ -93,9 +109,11 @@ static unsigned int build_stream(unsigned char **out, unsigned int gastime_s,
 }
 
 static dc_parser_t *make_parser(dc_context_t *ctx, unsigned int gastime_s,
-                                unsigned int water_type, unsigned int hr_bpm) {
+                                unsigned int water_type, unsigned int hr_bpm,
+                                unsigned int surf_temp_cK, int gas_switch) {
     unsigned char *data = NULL;
-    unsigned int size = build_stream(&data, gastime_s, water_type, hr_bpm);
+    unsigned int size = build_stream(&data, gastime_s, water_type, hr_bpm,
+                                    surf_temp_cK, gas_switch);
     dc_parser_t *parser = NULL;
     dc_status_t rc = suunto_nautic_parser_create(&parser, ctx, data, size);
     free(data);
@@ -111,7 +129,7 @@ static dc_parser_t *make_parser(dc_context_t *ctx, unsigned int gastime_s,
 static void check_salinity(dc_context_t *ctx, unsigned int water_type,
                            int expect_supported, dc_water_t expect_type,
                            double expect_density) {
-    dc_parser_t *parser = make_parser(ctx, 0xFFFFFFFF, water_type, 0);
+    dc_parser_t *parser = make_parser(ctx, 0xFFFFFFFF, water_type, 0, 0, -1);
     dc_salinity_t salinity = {0};
     dc_status_t rc = dc_parser_get_field(parser, DC_FIELD_SALINITY, 0, &salinity);
 
@@ -134,6 +152,8 @@ static unsigned int g_rbt_count;
 static unsigned int g_rbt_last;
 static unsigned int g_hr_count;
 static unsigned int g_hr_last;
+static unsigned int g_gasmix_count;
+static unsigned int g_gasmix_last;
 
 static void sample_cb(dc_sample_type_t type, const dc_sample_value_t *value,
                       void *userdata) {
@@ -144,12 +164,15 @@ static void sample_cb(dc_sample_type_t type, const dc_sample_value_t *value,
     } else if (type == DC_SAMPLE_HEARTBEAT) {
         g_hr_count++;
         g_hr_last = value->heartbeat;
+    } else if (type == DC_SAMPLE_GASMIX) {
+        g_gasmix_count++;
+        g_gasmix_last = value->gasmix;
     }
 }
 
 static void check_rbt(dc_context_t *ctx, unsigned int gastime_s,
                       unsigned int expect_count, unsigned int expect_minutes) {
-    dc_parser_t *parser = make_parser(ctx, gastime_s, 0xFF, 0);
+    dc_parser_t *parser = make_parser(ctx, gastime_s, 0xFF, 0, 0, -1);
     g_rbt_count = 0;
     g_rbt_last = 0;
     dc_status_t rc = dc_parser_samples_foreach(parser, sample_cb, NULL);
@@ -164,7 +187,7 @@ static void check_rbt(dc_context_t *ctx, unsigned int gastime_s,
 
 static void check_hr(dc_context_t *ctx, unsigned int hr_bpm,
                      unsigned int expect_count, unsigned int expect_bpm) {
-    dc_parser_t *parser = make_parser(ctx, 0xFFFFFFFF, 0xFF, hr_bpm);
+    dc_parser_t *parser = make_parser(ctx, 0xFFFFFFFF, 0xFF, hr_bpm, 0, -1);
     g_hr_count = 0;
     g_hr_last = 0;
     dc_status_t rc = dc_parser_samples_foreach(parser, sample_cb, NULL);
@@ -174,6 +197,32 @@ static void check_hr(dc_context_t *ctx, unsigned int hr_bpm,
     assert(g_hr_count == expect_count);
     if (expect_count)
         assert(g_hr_last == expect_bpm);
+    dc_parser_destroy(parser);
+}
+
+static void check_surface_temp(dc_context_t *ctx, unsigned int temp_cK,
+                               double expect_c) {
+    dc_parser_t *parser = make_parser(ctx, 0xFFFFFFFF, 0xFF, 0, temp_cK, -1);
+    double t = -999.0;
+    dc_status_t rc = dc_parser_get_field(parser, DC_FIELD_TEMPERATURE_SURFACE, 0, &t);
+    printf("  temp %u cK -> rc=%d  surface=%.2f C\n", temp_cK, rc, t);
+    assert(rc == DC_STATUS_SUCCESS);
+    assert(fabs(t - expect_c) < 0.05);
+    dc_parser_destroy(parser);
+}
+
+static void check_gas_switch(dc_context_t *ctx, int gas_switch,
+                             unsigned int expect_count, unsigned int expect_idx) {
+    dc_parser_t *parser = make_parser(ctx, 0xFFFFFFFF, 0xFF, 0, 0, gas_switch);
+    g_gasmix_count = 0;
+    g_gasmix_last = 0;
+    dc_status_t rc = dc_parser_samples_foreach(parser, sample_cb, NULL);
+    assert(rc == DC_STATUS_SUCCESS);
+    printf("  switch to %d -> %u GASMIX sample(s), last idx=%u\n", gas_switch,
+           g_gasmix_count, g_gasmix_last);
+    assert(g_gasmix_count == expect_count);
+    if (expect_count)
+        assert(g_gasmix_last == expect_idx);
     dc_parser_destroy(parser);
 }
 
@@ -198,6 +247,13 @@ int main(void) {
     printf("heart rate (0x0F, Ocean):\n");
     check_hr(ctx, 72, 1, 72);             /* 72 bpm -> one HEARTBEAT sample */
     check_hr(ctx, 0, 0, 0);               /* 0 = no chunk -> no sample */
+
+    printf("surface temperature (first 0x12 reading):\n");
+    check_surface_temp(ctx, 29715, 24.0); /* 297.15 K -> 24.0 C */
+
+    printf("gas switch (0x1F -> DC_SAMPLE_GASMIX):\n");
+    check_gas_switch(ctx, 1, 1, 1);       /* switch to gas 1 */
+    check_gas_switch(ctx, -1, 0, 0);      /* no switch chunk -> no sample */
 
     dc_context_free(ctx);
 
