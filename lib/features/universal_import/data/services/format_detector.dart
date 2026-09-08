@@ -92,7 +92,27 @@ class FormatDetector {
       return _detectSqliteApp(bytes);
     }
 
+    // Suunto "Vaasa" generation (Nautic / Ocean) raw log: an SBEM0103 record.
+    // The universal pipeline can't parse it, so the wizard hands off to the
+    // dive-computer file import on this format.
+    if (_isSuuntoNauticLog(bytes)) {
+      return const DetectionResult(
+        format: ImportFormat.suuntoNauticRaw,
+        sourceApp: SourceApp.suunto,
+        confidence: 1.0,
+      );
+    }
+
     return null;
+  }
+
+  bool _isSuuntoNauticLog(Uint8List bytes) {
+    const magic = 'SBEM0103';
+    if (bytes.length < magic.length) return false;
+    for (var i = 0; i < magic.length; i++) {
+      if (bytes[i] != magic.codeUnitAt(i)) return false;
+    }
+    return true;
   }
 
   bool _isFitFile(Uint8List bytes) {

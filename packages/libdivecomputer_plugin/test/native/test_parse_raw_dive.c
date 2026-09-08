@@ -105,6 +105,70 @@ static void test_parse_cressi_leonardo(void) {
     free(data);
 }
 
+/* A Suunto Nautic/Ocean download is stored as the decompressed profile
+   record immediately followed by the /Summary record (two SBEM0103 blocks in
+   one blob). The offline file-import path (RawLogImportService) hands exactly
+   that concatenation to libdc_parse_raw_dive under the "Suunto"/"Nautic"
+   descriptor, model 0. This pins that contract: the profile drives the depth
+   series, and the appended /Summary is what supplies the gradient factors,
+   the gas mix and the cylinder size. */
+static void test_parse_suunto_nautic(void) {
+    unsigned char *data = NULL;
+    unsigned int size = load_fixture("fixtures/suunto_nautic_dive.bin", &data);
+    assert(size > 700000);
+    assert(data != NULL);
+
+    /* The fixture must be the profile + /Summary concatenation: two SBEM0103
+       markers, the first at offset 0. */
+    assert(memcmp(data, "SBEM0103", 8) == 0);
+    unsigned int extra_markers = 0;
+    for (unsigned int i = 8; i + 8 <= size; i++) {
+        if (memcmp(data + i, "SBEM0103", 8) == 0) extra_markers++;
+    }
+    assert(extra_markers == 1);
+
+    libdc_parsed_dive_t result;
+    char err[256] = {0};
+
+    int rc = libdc_parse_raw_dive("Suunto", "Nautic", 0, data, size,
+                                  &result, err, sizeof(err));
+    if (rc != 0) {
+        fprintf(stderr, "FAIL: parse returned %d: %s\n", rc, err);
+        free(data);
+        assert(0 && "libdc_parse_raw_dive failed for Suunto Nautic");
+    }
+
+    /* Header, from the profile record. */
+    assert(fabs(result.max_depth - 33.11) < 0.5);
+    assert(fabs(result.avg_depth - 21.24) < 0.5);
+    assert(result.duration > 1800 && result.duration < 2000); /* ~32 min */
+    assert(result.dive_mode == 2);                            /* OC */
+    assert(result.sample_count > 100);
+    assert(result.samples != NULL);
+    for (unsigned int i = 1; i < result.sample_count; i++) {
+        assert(result.samples[i].depth >= 0.0);
+        assert(result.samples[i].time_ms >= result.samples[i - 1].time_ms);
+    }
+
+    /* These only exist because the /Summary record was appended and read. */
+    assert(result.deco_model_type == 1); /* buhlmann */
+    assert(result.gf_low == 85 && result.gf_high == 85);
+    assert(result.gasmix_count >= 1);
+    assert(fabs(result.gasmixes[0].oxygen - 0.21) < 0.001);
+    assert(result.tank_count >= 1);
+    assert(fabs(result.tanks[0].volume - 12.0) < 0.1);
+    assert(result.tanks[0].beginpressure > result.tanks[0].endpressure);
+
+    printf("PASS: test_parse_suunto_nautic (depth=%.1fm, %us, %u samples, "
+           "GF %u/%u, %.0f L)\n",
+           result.max_depth, result.duration, result.sample_count,
+           result.gf_low, result.gf_high, result.tanks[0].volume);
+
+    free(result.samples);
+    free(result.events);
+    free(data);
+}
+
 /* Issue #810: the wrapper must carry the raw O2 cell output through to
    libdc_sample_t, not just the ppO2 conversion. On this Petrel 3 the logged
    calibration is a factory default, so libdivecomputer withholds the per-cell
@@ -670,6 +734,7 @@ int main(void) {
     test_load_fixture_missing();
     test_unknown_descriptor();
     test_parse_cressi_leonardo();
+    test_parse_suunto_nautic();
     test_o2_cell_millivolts_reach_the_sample();
     test_parse_ratio_ix3m_sample_gps();
     test_parse_ratio_ix3m_single_fix();
