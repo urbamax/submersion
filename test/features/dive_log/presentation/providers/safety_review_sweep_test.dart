@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:submersion/core/database/database.dart';
 import 'package:submersion/features/dive_log/data/repositories/safety_findings_repository.dart';
 import 'package:submersion/features/dive_log/domain/entities/safety_finding.dart';
+import 'package:submersion/features/dive_log/domain/services/safety_review_service.dart';
 import 'package:submersion/features/dive_log/presentation/providers/profile_analysis_provider.dart';
 import 'package:submersion/features/dive_log/presentation/providers/safety_review_providers.dart';
 import 'package:submersion/features/dive_log/presentation/providers/safety_review_sweep.dart';
@@ -229,5 +230,66 @@ void main() {
       reason: 'swept counts dives visited, not successes',
     );
     expect(repo.saved, <String>['d2']);
+  });
+
+  test('forces a real recompute even when a current-engine-version review is '
+      'already stored', () async {
+    // A stale review that looks "current enough" for safetyReviewProvider's
+    // own cache check to serve verbatim: right engineVersion, but findings
+    // that do not match what the fixture profile actually analyzes to
+    // (mirrors residual tissue-loading contaminated by an earlier dive
+    // that has since been fixed independently of this one).
+    final repo = SafetyFindingsRepository(db: db);
+    await db
+        .into(db.diveSafetyReviews)
+        .insert(
+          DiveSafetyReviewsCompanion.insert(
+            diveId: 'd1',
+            engineVersion: SafetyReviewService.engineVersion,
+            reviewedAt: now.millisecondsSinceEpoch,
+          ),
+        );
+    await db
+        .into(db.diveSafetyFindings)
+        .insert(
+          DiveSafetyFindingsCompanion.insert(
+            id: 'stale-finding',
+            diveId: 'd1',
+            ruleId: 'highSurfaceGf',
+            severity: 'info',
+            engineVersion: SafetyReviewService.engineVersion,
+            value: const Value(443.0),
+            createdAt: now.millisecondsSinceEpoch,
+          ),
+        );
+
+    final profile = rapidAscentProfile();
+    final analysis = analyzeFixture(
+      depths: profile.depths,
+      timestamps: profile.timestamps,
+    );
+    final container = ProviderContainer(
+      overrides: [
+        safetyFindingsRepositoryProvider.overrideWithValue(repo),
+        safetyReviewEnabledProvider.overrideWithValue(true),
+        profileAnalysisProvider('d1').overrideWith((ref) async => analysis),
+        profileAnalysisProvider('d2').overrideWith((ref) async => analysis),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await container.read(safetyReviewSweepProvider).run(diverId: 'diver-a');
+
+    final review = await repo.getReview('d1');
+    expect(
+      review!.findings.any((f) => f.id == 'stale-finding'),
+      isFalse,
+      reason: 'the stale finding must be replaced, not left in place',
+    );
+    expect(
+      review.findings,
+      isNotEmpty,
+      reason: 'the fixture profile does produce real findings',
+    );
   });
 }

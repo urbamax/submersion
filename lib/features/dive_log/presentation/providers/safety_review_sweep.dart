@@ -93,12 +93,24 @@ class SafetyReviewSweep {
         );
       }
       try {
-        // Invalidate first. safetyReviewProvider is not autoDispose, so any
-        // dive whose detail page was opened this session holds a cached
-        // AsyncValue -- including a cached null from a dive opened mid-sync
-        // before its profile arrived. A bare read would return that cached
-        // value and never run the compute-through-cache, leaving the review
-        // missing until an app restart.
+        // Drop the stored review before invalidating. safetyReviewProvider's
+        // compute-through-cache returns a stored review verbatim whenever its
+        // engineVersion is current, with no check for whether the dive's own
+        // profile or an earlier dive's (tissue/CNS/OTU carries forward in
+        // date order, per the sweep's iteration order below) changed since
+        // it was computed -- e.g. a reparse of an earlier dive in the
+        // sequence. A bare invalidate only clears Riverpod's cache of the
+        // provider's last result; the provider body then re-reads that same
+        // stale-but-current-version row and returns it again. This sweep's
+        // whole purpose is a forced bulk recompute, so it must not defer to
+        // that cache at all.
+        await _ref.read(safetyFindingsRepositoryProvider).clearReview(diveId);
+        // Riverpod cache, not the DB: any dive whose detail page was opened
+        // this session holds a cached AsyncValue -- including a cached null
+        // from a dive opened mid-sync before its profile arrived. A bare
+        // read would return that cached value and never run
+        // compute-through-cache, leaving the review missing until an app
+        // restart.
         _ref.invalidate(safetyReviewProvider(diveId));
         await _ref.read(safetyReviewProvider(diveId).future);
       } catch (_) {

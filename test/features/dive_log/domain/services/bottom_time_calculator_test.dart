@@ -130,5 +130,32 @@ void main() {
         isNull,
       );
     });
+
+    test('clamps to totalDurationSeconds when a corrupted timestamp puts the '
+        'ascent start past the dive itself', () {
+      // Same profile as the multilevel case (unclamped result: 3060 s),
+      // but the dive's own reported runtime is only 1800 s -- a shorter
+      // total than the computed bottom time can never be legitimate.
+      expect(
+        BottomTimeCalculator.secondsFromSamples(
+          multilevel,
+          totalDurationSeconds: 1800,
+        ),
+        1800,
+      );
+    });
+
+    test(
+      'totalDurationSeconds is a no-op when the result is already within it',
+      () {
+        expect(
+          BottomTimeCalculator.secondsFromSamples(
+            multilevel,
+            totalDurationSeconds: 3600,
+          ),
+          3060,
+        );
+      },
+    );
   });
 }

@@ -29,11 +29,17 @@ class BottomTimeCalculator {
   /// Bottom time in seconds from (timestamp, depth) samples, or null when
   /// the profile is too small or degenerate. Samples need not be sorted;
   /// timestamps are seconds from dive start, depths are meters.
+  ///
+  /// [totalDurationSeconds], when given, clamps the result: a corrupted
+  /// sample timeline (e.g. a driver bug that mis-times one sample) can put
+  /// the computed ascent start past the dive's own reported end, producing
+  /// a bottom time longer than the dive itself.
   static int? secondsFromSamples(
     List<({int timestamp, double depth})> samples, {
     double absoluteFloorMeters = defaultAbsoluteFloorMeters,
     double maxDepthFraction = defaultMaxDepthFraction,
     double thresholdCapFraction = defaultThresholdCapFraction,
+    int? totalDurationSeconds,
   }) {
     if (samples.length < 3) return null;
 
@@ -60,7 +66,10 @@ class BottomTimeCalculator {
     }
     if (ascentStart == null) return null;
 
-    final bottomSeconds = ascentStart - sorted.first.timestamp;
+    var bottomSeconds = ascentStart - sorted.first.timestamp;
+    if (totalDurationSeconds != null && bottomSeconds > totalDurationSeconds) {
+      bottomSeconds = totalDurationSeconds;
+    }
     return bottomSeconds > 0 ? bottomSeconds : null;
   }
 }

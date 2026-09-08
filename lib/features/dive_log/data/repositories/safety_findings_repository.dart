@@ -235,6 +235,12 @@ class SafetyFindingsRepository {
     return changed;
   }
 
+  /// Instance-method convenience over [clearReviewForDive] for callers that
+  /// already hold a [SafetyFindingsRepository] (e.g. the safety review sweep)
+  /// rather than a bare `AppDatabase`/`SyncRepository` pair.
+  Future<void> clearReview(String diveId) =>
+      clearReviewForDive(_db, _syncRepository, diveId);
+
   /// Invalidation hook for profile writes: drops the review so the next view
   /// recomputes against the new profile. Static so both dive repositories
   /// can call it without holding a SafetyFindingsRepository.
