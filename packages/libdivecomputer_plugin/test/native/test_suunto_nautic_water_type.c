@@ -46,7 +46,7 @@ static void put_u32le(unsigned char *p, unsigned int v) {
    `water_type` of 0xFF omits the salinity byte's meaning (leaves it 0 = fresh);
    pass 0..3 to exercise the mapping. */
 static unsigned int build_stream(unsigned char **out, unsigned int gastime_s,
-                                 unsigned int water_type) {
+                                 unsigned int water_type, unsigned int hr_bpm) {
     static unsigned char buf[512];
     unsigned char *p = buf;
 
@@ -55,6 +55,12 @@ static unsigned int build_stream(unsigned char **out, unsigned int gastime_s,
 
     *p++ = 0x1C; *p++ = 3;                      /* DIVE_STATE -> Diving */
     put_u16le(p, 0); p += 2; *p++ = 1;
+
+    if (hr_bpm) {                               /* 0x0F: [delta:2][hr:u8 bpm] */
+        *p++ = 0x0F; *p++ = 3;
+        put_u16le(p, 0); p += 2;
+        *p++ = (unsigned char)hr_bpm;
+    }
 
     /* 0x16 extended status: [delta:2][depth:f32 @2] ... cylinder array at +42,
        18 bytes per slot: [idx:1][?:1][pressure:u32 @+2][pressure2:u32 @+6]
@@ -87,9 +93,9 @@ static unsigned int build_stream(unsigned char **out, unsigned int gastime_s,
 }
 
 static dc_parser_t *make_parser(dc_context_t *ctx, unsigned int gastime_s,
-                                unsigned int water_type) {
+                                unsigned int water_type, unsigned int hr_bpm) {
     unsigned char *data = NULL;
-    unsigned int size = build_stream(&data, gastime_s, water_type);
+    unsigned int size = build_stream(&data, gastime_s, water_type, hr_bpm);
     dc_parser_t *parser = NULL;
     dc_status_t rc = suunto_nautic_parser_create(&parser, ctx, data, size);
     free(data);
@@ -105,7 +111,7 @@ static dc_parser_t *make_parser(dc_context_t *ctx, unsigned int gastime_s,
 static void check_salinity(dc_context_t *ctx, unsigned int water_type,
                            int expect_supported, dc_water_t expect_type,
                            double expect_density) {
-    dc_parser_t *parser = make_parser(ctx, 0xFFFFFFFF, water_type);
+    dc_parser_t *parser = make_parser(ctx, 0xFFFFFFFF, water_type, 0);
     dc_salinity_t salinity = {0};
     dc_status_t rc = dc_parser_get_field(parser, DC_FIELD_SALINITY, 0, &salinity);
 
@@ -126,6 +132,8 @@ static void check_salinity(dc_context_t *ctx, unsigned int water_type,
 
 static unsigned int g_rbt_count;
 static unsigned int g_rbt_last;
+static unsigned int g_hr_count;
+static unsigned int g_hr_last;
 
 static void sample_cb(dc_sample_type_t type, const dc_sample_value_t *value,
                       void *userdata) {
@@ -133,12 +141,15 @@ static void sample_cb(dc_sample_type_t type, const dc_sample_value_t *value,
     if (type == DC_SAMPLE_RBT) {
         g_rbt_count++;
         g_rbt_last = value->rbt;
+    } else if (type == DC_SAMPLE_HEARTBEAT) {
+        g_hr_count++;
+        g_hr_last = value->heartbeat;
     }
 }
 
 static void check_rbt(dc_context_t *ctx, unsigned int gastime_s,
                       unsigned int expect_count, unsigned int expect_minutes) {
-    dc_parser_t *parser = make_parser(ctx, gastime_s, 0xFF);
+    dc_parser_t *parser = make_parser(ctx, gastime_s, 0xFF, 0);
     g_rbt_count = 0;
     g_rbt_last = 0;
     dc_status_t rc = dc_parser_samples_foreach(parser, sample_cb, NULL);
@@ -151,8 +162,23 @@ static void check_rbt(dc_context_t *ctx, unsigned int gastime_s,
     dc_parser_destroy(parser);
 }
 
+static void check_hr(dc_context_t *ctx, unsigned int hr_bpm,
+                     unsigned int expect_count, unsigned int expect_bpm) {
+    dc_parser_t *parser = make_parser(ctx, 0xFFFFFFFF, 0xFF, hr_bpm);
+    g_hr_count = 0;
+    g_hr_last = 0;
+    dc_status_t rc = dc_parser_samples_foreach(parser, sample_cb, NULL);
+    assert(rc == DC_STATUS_SUCCESS);
+    printf("  hr %u bpm -> %u HEARTBEAT sample(s), last=%u\n", hr_bpm,
+           g_hr_count, g_hr_last);
+    assert(g_hr_count == expect_count);
+    if (expect_count)
+        assert(g_hr_last == expect_bpm);
+    dc_parser_destroy(parser);
+}
+
 int main(void) {
-    printf("Running Suunto Nautic water-type / RBT tests...\n");
+    printf("Running Suunto Nautic water-type / RBT / HR tests...\n");
 
     dc_context_t *ctx = NULL;
     assert(dc_context_new(&ctx) == DC_STATUS_SUCCESS);
@@ -169,8 +195,12 @@ int main(void) {
     check_rbt(ctx, 0xFFFFFFFF, 0, 0);     /* sentinel -> no sample */
     check_rbt(ctx, 0, 0, 0);              /* zero -> no sample */
 
+    printf("heart rate (0x0F, Ocean):\n");
+    check_hr(ctx, 72, 1, 72);             /* 72 bpm -> one HEARTBEAT sample */
+    check_hr(ctx, 0, 0, 0);               /* 0 = no chunk -> no sample */
+
     dc_context_free(ctx);
 
-    printf("PASS\nAll Suunto Nautic water-type / RBT tests passed\n");
+    printf("PASS\nAll Suunto Nautic water-type / RBT / HR tests passed\n");
     return 0;
 }
