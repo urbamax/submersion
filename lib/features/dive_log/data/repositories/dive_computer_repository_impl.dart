@@ -1436,6 +1436,7 @@ class DiveComputerRepository {
                 hePercent: Value(tank.hePercent),
                 tankOrder: Value(tank.index),
                 tankRole: Value(tank.role ?? 'backGas'),
+                transmitterSerial: Value(tank.transmitterSerial),
               ),
             );
             _log.info(
@@ -2372,6 +2373,10 @@ class TankData {
   /// Inferred cylinder role (a [TankRole] name), or null for the default.
   final String? role;
 
+  /// Serial of the air-integration transmitter the computer read this tank
+  /// from, or null when it reported none.
+  final String? transmitterSerial;
+
   const TankData({
     required this.index,
     required this.o2Percent,
@@ -2383,6 +2388,7 @@ class TankData {
     this.material,
     this.presetName,
     this.role,
+    this.transmitterSerial,
   });
 }
 
