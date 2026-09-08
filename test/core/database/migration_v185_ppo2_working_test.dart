@@ -36,8 +36,11 @@ void main() {
     },
   );
 
-  test('v192 is the current schema version and is in the ladder', () {
-    expect(AppDatabase.currentSchemaVersion, 192);
+  test('v192 is in the migration ladder', () {
+    // Relaxed from an exact match when main's v194
+    // (dive_tanks.transmitter_serial) landed on top: the exact-version
+    // assertion is the newest rung's job (migration_v194_*).
+    expect(AppDatabase.currentSchemaVersion, greaterThanOrEqualTo(192));
     expect(AppDatabase.migrationVersions, contains(192));
   });
 
