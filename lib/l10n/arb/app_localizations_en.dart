@@ -21521,6 +21521,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Connected to the dive computer, but it stopped responding before the download could start. This usually means the Bluetooth pairing is out of date: forget the dive computer in your device\'s Bluetooth settings, then try again.';
 
   @override
+  String get diveComputer_download_suuntoNauticAppOpen =>
+      'The download stopped before it finished. This is almost always the Suunto app still connected to the watch, which holds the Bluetooth link. Close the Suunto app completely, then start the download again.';
+
+  @override
   String diveComputer_download_serialConnectFailedWithDetails(Object details) {
     return 'Could not connect to dive computer.\n\nDiagnostic details (share with developers):\n$details';
   }

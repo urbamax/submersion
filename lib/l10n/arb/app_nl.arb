@@ -1502,6 +1502,7 @@
   },
   "diveComputer_download_stalePairing": "De Bluetooth-koppeling van deze duikcomputer is verouderd. Vergeet de duikcomputer in de Bluetooth-instellingen van je apparaat en koppel hem daarna opnieuw via het Bluetooth-menu van de duikcomputer.",
   "diveComputer_download_discoveryStalled": "Verbonden met de duikcomputer, maar hij reageerde niet meer voordat de download kon beginnen. Meestal betekent dit dat de Bluetooth-koppeling verouderd is: vergeet de duikcomputer in de Bluetooth-instellingen van je apparaat en probeer het opnieuw.",
+  "diveComputer_download_suuntoNauticAppOpen": "De download is voortijdig gestopt. Bijna altijd komt dit doordat de Suunto-app nog met het horloge verbonden is en de Bluetooth-verbinding bezet houdt. Sluit de Suunto-app volledig af en start de download opnieuw.",
   "diveComputer_download_serialConnectFailedWithDetails": "Kan geen verbinding maken met de duikcomputer.\n\nDiagnostische gegevens (deel met ontwikkelaars):\n{details}",
   "@diveComputer_download_serialConnectFailedWithDetails": {
     "placeholders": {

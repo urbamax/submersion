@@ -21496,6 +21496,10 @@ class AppLocalizationsAr extends AppLocalizations {
       'تم الاتصال بكمبيوتر الغوص، لكنه توقف عن الاستجابة قبل بدء التنزيل. يعني هذا عادةً أن إقران البلوتوث لم يعد صالحًا: انسَ كمبيوتر الغوص من إعدادات البلوتوث في جهازك ثم حاول مرة أخرى.';
 
   @override
+  String get diveComputer_download_suuntoNauticAppOpen =>
+      'توقف التنزيل قبل اكتماله. يحدث ذلك غالبًا لأن تطبيق Suunto لا يزال متصلاً بالساعة ويحتفظ باتصال البلوتوث. أغلق تطبيق Suunto تمامًا ثم أعد بدء التنزيل.';
+
+  @override
   String diveComputer_download_serialConnectFailedWithDetails(Object details) {
     return 'تعذر الاتصال بحاسوب الغوص.\n\nتفاصيل التشخيص (شاركها مع المطورين):\n$details';
   }

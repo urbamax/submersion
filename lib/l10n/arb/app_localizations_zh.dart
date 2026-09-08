@@ -20753,6 +20753,10 @@ class AppLocalizationsZh extends AppLocalizations {
       '已连接到潜水电脑，但在下载开始前它停止响应。这通常表示蓝牙配对已失效：请在设备的蓝牙设置中忽略该潜水电脑，然后重试。';
 
   @override
+  String get diveComputer_download_suuntoNauticAppOpen =>
+      '下载在完成前中断。这几乎总是因为 Suunto 应用仍与手表连接，占用了蓝牙链路。请完全关闭 Suunto 应用，然后重新开始下载。';
+
+  @override
   String diveComputer_download_serialConnectFailedWithDetails(Object details) {
     return '无法连接到潜水电脑。\n\n诊断详情（请分享给开发人员）：\n$details';
   }

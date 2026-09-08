@@ -3,6 +3,7 @@ import 'package:submersion/core/providers/provider.dart';
 
 import 'package:submersion/features/dive_computer/domain/entities/device_model.dart';
 import 'package:submersion/features/dive_computer/domain/entities/downloaded_dive.dart';
+import 'package:submersion/features/dive_computer/domain/services/suunto_nautic_event_labels.dart';
 import 'package:submersion/features/dive_computer/presentation/providers/download_providers.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive_computer.dart';
 import 'package:submersion/features/dive_computer/presentation/widgets/pin_code_dialog.dart';
@@ -708,6 +709,26 @@ class _DownloadStepWidgetState extends ConsumerState<DownloadStepWidget> {
         state.errorMessage!,
       );
     }
+    // A Suunto Nautic / Ocean download that stops mid-transfer is, far more
+    // often than not, the Suunto mobile app still connected to the watch: its
+    // logbook subscription leaks frames onto the shared BLE link and the
+    // transfer stalls. The driver degrades that to a clean failure rather than
+    // erroring, but the diver still has to know to close the Suunto app
+    // (deepsealabs/libdc-swift#29). The protocol-level detail stays in the
+    // debug log.
+    if (state.errorCode == 'download_error' && _isSuuntoNauticDevice()) {
+      return l10n.diveComputer_download_suuntoNauticAppOpen;
+    }
     return state.errorMessage ?? l10n.diveComputer_downloadStep_errorOccurred;
+  }
+
+  bool _isSuuntoNauticDevice() {
+    final device = widget.device;
+    if (device == null) return false;
+    if (isSuuntoNauticFamily(device.manufacturer, device.model)) return true;
+    // The Ocean's BLE name ("S19 <hex> LE") is not always resolved to a
+    // descriptor (issue #123), so fall back to the advertised name.
+    final name = device.name.toLowerCase();
+    return name.contains('nautic') || name.contains('ocean');
   }
 }

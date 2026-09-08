@@ -1502,6 +1502,7 @@
   },
   "diveComputer_download_stalePairing": "Die Bluetooth-Kopplung dieses Tauchcomputers ist veraltet. Entfernen Sie den Tauchcomputer in den Bluetooth-Einstellungen Ihres Geräts und koppeln Sie ihn anschließend über das Bluetooth-Menü des Tauchcomputers erneut.",
   "diveComputer_download_discoveryStalled": "Der Tauchcomputer wurde verbunden, hat aber vor dem Start des Downloads nicht mehr geantwortet. Meist ist die Bluetooth-Kopplung veraltet: Entfernen Sie den Tauchcomputer in den Bluetooth-Einstellungen Ihres Geräts und versuchen Sie es erneut.",
+  "diveComputer_download_suuntoNauticAppOpen": "Der Download wurde vor dem Ende abgebrochen. Fast immer liegt das daran, dass die Suunto-App noch mit der Uhr verbunden ist und die Bluetooth-Verbindung belegt. Schließen Sie die Suunto-App vollständig und starten Sie den Download erneut.",
   "diveComputer_download_serialConnectFailedWithDetails": "Verbindung zum Tauchcomputer konnte nicht hergestellt werden.\n\nDiagnosedetails (mit Entwicklern teilen):\n{details}",
   "@diveComputer_download_serialConnectFailedWithDetails": {
     "placeholders": {

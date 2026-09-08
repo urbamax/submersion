@@ -21990,6 +21990,10 @@ class AppLocalizationsFr extends AppLocalizations {
       'Connexion établie avec l\'ordinateur de plongée, mais il a cessé de répondre avant le début du téléchargement. Cela signifie généralement que l\'appairage Bluetooth n\'est plus valide : oubliez l\'ordinateur de plongée dans les réglages Bluetooth de votre appareil, puis réessayez.';
 
   @override
+  String get diveComputer_download_suuntoNauticAppOpen =>
+      'Le téléchargement s\'est interrompu avant la fin. C\'est presque toujours l\'application Suunto encore connectée à la montre, qui garde la liaison Bluetooth. Fermez complètement l\'application Suunto, puis relancez le téléchargement.';
+
+  @override
   String diveComputer_download_serialConnectFailedWithDetails(Object details) {
     return 'Impossible de se connecter à l\'ordinateur de plongée.\n\nDétails de diagnostic (à partager avec les développeurs) :\n$details';
   }

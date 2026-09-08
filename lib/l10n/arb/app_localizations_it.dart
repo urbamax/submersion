@@ -21903,6 +21903,10 @@ class AppLocalizationsIt extends AppLocalizations {
       'Connessione al computer subacqueo riuscita, ma ha smesso di rispondere prima dell\'avvio del download. Di solito significa che l\'associazione Bluetooth non è più valida: dimentica il computer subacqueo nelle impostazioni Bluetooth del tuo dispositivo e riprova.';
 
   @override
+  String get diveComputer_download_suuntoNauticAppOpen =>
+      'Il download si è interrotto prima di completarsi. Quasi sempre dipende dall\'app Suunto ancora connessa all\'orologio, che occupa il collegamento Bluetooth. Chiudi completamente l\'app Suunto e riavvia il download.';
+
+  @override
   String diveComputer_download_serialConnectFailedWithDetails(Object details) {
     return 'Impossibile connettersi al computer subacqueo.\n\nDettagli diagnostici (da condividere con gli sviluppatori):\n$details';
   }

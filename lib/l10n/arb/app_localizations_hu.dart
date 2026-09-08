@@ -21834,6 +21834,10 @@ class AppLocalizationsHu extends AppLocalizations {
       'A merülőkomputer csatlakozott, de a letöltés megkezdése előtt nem válaszolt tovább. Ez általában azt jelenti, hogy a Bluetooth-párosítás elavult: felejtesd el a merülőkomputert az eszközöd Bluetooth-beállításaiban, majd próbáld újra.';
 
   @override
+  String get diveComputer_download_suuntoNauticAppOpen =>
+      'A letöltés a befejezés előtt megszakadt. Ez szinte mindig azért van, mert a Suunto alkalmazás még csatlakozik az órához, és foglalja a Bluetooth-kapcsolatot. Zárja be teljesen a Suunto alkalmazást, majd indítsa újra a letöltést.';
+
+  @override
   String diveComputer_download_serialConnectFailedWithDetails(Object details) {
     return 'Nem sikerült csatlakozni a búvárszámítógéphez.\n\nDiagnosztikai részletek (ossza meg a fejlesztőkkel):\n$details';
   }

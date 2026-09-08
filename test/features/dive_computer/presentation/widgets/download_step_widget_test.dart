@@ -150,6 +150,30 @@ final _testDevice = DiscoveredDevice(
   discoveredAt: DateTime(2026, 3, 20),
 );
 
+final _nauticDevice = DiscoveredDevice(
+  id: 'nautic-1',
+  name: 'Suunto Nautic 2604C3003306',
+  connectionType: DeviceConnectionType.ble,
+  address: 'AA:BB:CC:DD:EE:01',
+  recognizedModel: const DeviceModel(
+    id: 'suunto_nautic',
+    manufacturer: 'Suunto',
+    model: 'Nautic',
+    connectionTypes: [DeviceConnectionType.ble],
+  ),
+  discoveredAt: DateTime(2026, 3, 20),
+);
+
+// An Ocean whose BLE name ("S19 <hex> LE") the descriptor table does not
+// resolve (issue #123), so it carries no recognizedModel to match on.
+final _unresolvedOceanDevice = DiscoveredDevice(
+  id: 'ocean-1',
+  name: 'Suunto Ocean 1A2B3C4D5E6F',
+  connectionType: DeviceConnectionType.ble,
+  address: 'AA:BB:CC:DD:EE:02',
+  discoveredAt: DateTime(2026, 3, 20),
+);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -841,6 +865,66 @@ void main() {
 
       expect(find.textContaining('stopped responding'), findsOneWidget);
       expect(find.text('Failed to connect to device'), findsNothing);
+    });
+
+    // A Suunto Nautic / Ocean download that fails mid-transfer is, far more
+    // often than not, the Suunto app still connected and holding the BLE link
+    // (deepsealabs/libdc-swift#29). The diver needs to be told to close it.
+    testWidgets('a Nautic download_error points at the open Suunto app', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _buildWidget(
+          device: _nauticDevice,
+          initialState: const DownloadState(
+            phase: DownloadPhase.error,
+            errorCode: 'download_error',
+            errorMessage: 'Download failed: Timeout.',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Suunto app'), findsOneWidget);
+      expect(find.text('Download failed: Timeout.'), findsNothing);
+    });
+
+    testWidgets(
+      'the Suunto-app hint also fires for an unresolved Ocean, by name',
+      (tester) async {
+        await tester.pumpWidget(
+          _buildWidget(
+            device: _unresolvedOceanDevice,
+            initialState: const DownloadState(
+              phase: DownloadPhase.error,
+              errorCode: 'download_error',
+              errorMessage: 'Download failed: I/O error.',
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        expect(find.textContaining('Suunto app'), findsOneWidget);
+      },
+    );
+
+    testWidgets('a non-Suunto download_error keeps the native message', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _buildWidget(
+          device: _testDevice, // Shearwater Perdix
+          initialState: const DownloadState(
+            phase: DownloadPhase.error,
+            errorCode: 'download_error',
+            errorMessage: 'Download failed: Timeout.',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Download failed: Timeout.'), findsOneWidget);
+      expect(find.textContaining('Suunto app'), findsNothing);
     });
 
     // Issue #1271: a USB HID computer (the Scubapro G2 family, the Suunto EON

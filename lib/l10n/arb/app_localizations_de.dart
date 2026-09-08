@@ -21861,6 +21861,10 @@ class AppLocalizationsDe extends AppLocalizations {
       'Der Tauchcomputer wurde verbunden, hat aber vor dem Start des Downloads nicht mehr geantwortet. Meist ist die Bluetooth-Kopplung veraltet: Entfernen Sie den Tauchcomputer in den Bluetooth-Einstellungen Ihres Geräts und versuchen Sie es erneut.';
 
   @override
+  String get diveComputer_download_suuntoNauticAppOpen =>
+      'Der Download wurde vor dem Ende abgebrochen. Fast immer liegt das daran, dass die Suunto-App noch mit der Uhr verbunden ist und die Bluetooth-Verbindung belegt. Schließen Sie die Suunto-App vollständig und starten Sie den Download erneut.';
+
+  @override
   String diveComputer_download_serialConnectFailedWithDetails(Object details) {
     return 'Verbindung zum Tauchcomputer konnte nicht hergestellt werden.\n\nDiagnosedetails (mit Entwicklern teilen):\n$details';
   }

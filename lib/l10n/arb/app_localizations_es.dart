@@ -21922,6 +21922,10 @@ class AppLocalizationsEs extends AppLocalizations {
       'Se conectó al ordenador de buceo, pero dejó de responder antes de que comenzara la descarga. Normalmente esto significa que el emparejamiento Bluetooth está obsoleto: olvida el ordenador de buceo en los ajustes de Bluetooth de tu dispositivo y vuelve a intentarlo.';
 
   @override
+  String get diveComputer_download_suuntoNauticAppOpen =>
+      'La descarga se detuvo antes de terminar. Casi siempre se debe a que la aplicación Suunto sigue conectada al reloj y ocupa el enlace Bluetooth. Cierra por completo la aplicación Suunto y vuelve a iniciar la descarga.';
+
+  @override
   String diveComputer_download_serialConnectFailedWithDetails(Object details) {
     return 'No se pudo conectar al ordenador de buceo.\n\nDetalles de diagnóstico (compartir con los desarrolladores):\n$details';
   }

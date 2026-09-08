@@ -1502,6 +1502,7 @@
   },
   "diveComputer_download_stalePairing": "התאמת ה-Bluetooth של מחשב הצלילה הזה אינה עדכנית. שכח את מחשב הצלילה בהגדרות ה-Bluetooth של המכשיר שלך, ולאחר מכן התאם אותו מחדש מתפריט ה-Bluetooth של מחשב הצלילה.",
   "diveComputer_download_discoveryStalled": "ההתחברות למחשב הצלילה הצליחה, אך הוא הפסיק להגיב לפני תחילת ההורדה. בדרך כלל המשמעות היא שהתאמת ה-Bluetooth אינה עדכנית: שכח את מחשב הצלילה בהגדרות ה-Bluetooth של המכשיר שלך ונסה שוב.",
+  "diveComputer_download_suuntoNauticAppOpen": "ההורדה נעצרה לפני שהסתיימה. כמעט תמיד הסיבה היא שאפליקציית Suunto עדיין מחוברת לשעון ותופסת את חיבור ה-Bluetooth. סגור לגמרי את אפליקציית Suunto והתחל את ההורדה מחדש.",
   "diveComputer_download_serialConnectFailedWithDetails": "לא ניתן להתחבר למחשב הצלילה.\n\nפרטי אבחון (שתפו עם המפתחים):\n{details}",
   "@diveComputer_download_serialConnectFailedWithDetails": {
     "placeholders": {

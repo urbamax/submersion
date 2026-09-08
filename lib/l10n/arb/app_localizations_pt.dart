@@ -21903,6 +21903,10 @@ class AppLocalizationsPt extends AppLocalizations {
       'Ligou-se ao computador de mergulho, mas ele deixou de responder antes de a transferência começar. Normalmente isto significa que o emparelhamento Bluetooth está desatualizado: esqueça o computador de mergulho nas definições de Bluetooth do seu dispositivo e tente novamente.';
 
   @override
+  String get diveComputer_download_suuntoNauticAppOpen =>
+      'O download parou antes de terminar. Quase sempre é a aplicação Suunto ainda ligada ao relógio, que ocupa a ligação Bluetooth. Feche completamente a aplicação Suunto e inicie o download novamente.';
+
+  @override
   String diveComputer_download_serialConnectFailedWithDetails(Object details) {
     return 'Não foi possível conectar ao computador de mergulho.\n\nDetalhes de diagnóstico (compartilhe com os desenvolvedores):\n$details';
   }

@@ -21344,6 +21344,10 @@ class AppLocalizationsHe extends AppLocalizations {
       'ההתחברות למחשב הצלילה הצליחה, אך הוא הפסיק להגיב לפני תחילת ההורדה. בדרך כלל המשמעות היא שהתאמת ה-Bluetooth אינה עדכנית: שכח את מחשב הצלילה בהגדרות ה-Bluetooth של המכשיר שלך ונסה שוב.';
 
   @override
+  String get diveComputer_download_suuntoNauticAppOpen =>
+      'ההורדה נעצרה לפני שהסתיימה. כמעט תמיד הסיבה היא שאפליקציית Suunto עדיין מחוברת לשעון ותופסת את חיבור ה-Bluetooth. סגור לגמרי את אפליקציית Suunto והתחל את ההורדה מחדש.';
+
+  @override
   String diveComputer_download_serialConnectFailedWithDetails(Object details) {
     return 'לא ניתן להתחבר למחשב הצלילה.\n\nפרטי אבחון (שתפו עם המפתחים):\n$details';
   }

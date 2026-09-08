@@ -21724,6 +21724,10 @@ class AppLocalizationsNl extends AppLocalizations {
       'Verbonden met de duikcomputer, maar hij reageerde niet meer voordat de download kon beginnen. Meestal betekent dit dat de Bluetooth-koppeling verouderd is: vergeet de duikcomputer in de Bluetooth-instellingen van je apparaat en probeer het opnieuw.';
 
   @override
+  String get diveComputer_download_suuntoNauticAppOpen =>
+      'De download is voortijdig gestopt. Bijna altijd komt dit doordat de Suunto-app nog met het horloge verbonden is en de Bluetooth-verbinding bezet houdt. Sluit de Suunto-app volledig af en start de download opnieuw.';
+
+  @override
   String diveComputer_download_serialConnectFailedWithDetails(Object details) {
     return 'Kan geen verbinding maken met de duikcomputer.\n\nDiagnostische gegevens (deel met ontwikkelaars):\n$details';
   }
