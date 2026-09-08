@@ -30,9 +30,10 @@ const _columns = {
 
 void main() {
   test('v191 is present in the migration ladder', () {
-    // v191 is a past migration now: the suunto-nautic branch adds v192
-    // (dives.pp_o2_working) on top, so the latest-version tripwire moved to
-    // migration_v185_ppo2_working_test.dart. Assert membership, not equality.
+    // v191 is a past migration now: main landed v194
+    // (dive_tanks.transmitter_serial) and the suunto-nautic branch adds v192
+    // (dives.pp_o2_working). The exact-version assertion is the newest rung's
+    // own job; assert membership here, not equality.
     expect(AppDatabase.currentSchemaVersion, greaterThanOrEqualTo(191));
     expect(AppDatabase.migrationVersions, contains(191));
   });
