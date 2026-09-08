@@ -47,6 +47,7 @@ import 'package:submersion/core/ui/chart_viewport.dart';
 import 'package:submersion/features/dive_log/presentation/widgets/profile_event_labels.dart';
 import 'package:submersion/features/dive_log/presentation/widgets/profile_highlight_range.dart';
 import 'package:submersion/core/ui/trackpad_zoom_recognizer.dart';
+import 'package:submersion/features/dive_log/presentation/formatters/profile_event_label.dart';
 
 /// Opacity of the shaded region between the ceiling and the surface.
 ///
@@ -1280,14 +1281,20 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
     });
   }
 
+  /// Whether this dive carries the computer's own (imported) events.
+  bool get _diveHasImportedEvents =>
+      widget.events?.any((e) => e.source == EventSource.imported) ?? false;
+
   /// Seed the legend's "Computed events" toggle and its "Computer data"
   /// metric-source preference from this dive: on a computer download, show
   /// just the computer's events and prefer its own NDL / TTS / deco values;
   /// on a manual or file-import dive, show the app's analysis (issue #1523).
+  /// The chart's own first paint already reflects the toggle (see [build]);
+  /// the post-frame hop keeps the shared provider and the legend in step.
   void _scheduleComputedEventsSeed() {
     final events = widget.events;
     if (events == null || events.isEmpty) return;
-    final hasImported = events.any((e) => e.source == EventSource.imported);
+    final hasImported = _diveHasImportedEvents;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ref
@@ -2108,6 +2115,14 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
     _showAscentRateLine = legendState.showAscentRateLine;
     _showEvents = legendState.showEvents;
     _showComputedEvents = legendState.showComputedEvents;
+    // Issue #1523: the provider default is `true`, and for a dive that carries
+    // the computer's own events the post-frame seed only flips it to `false`
+    // after the first frame -- long enough to flash the computed markers. Until
+    // the user takes over the toggle, mirror the seed's decision here so the
+    // first paint is already right (and stays right when switching dives).
+    if (ref.read(profileLegendProvider.notifier).computedEventsFollowsDive) {
+      _showComputedEvents = !_diveHasImportedEvents;
+    }
     _showMaxDepthMarkerLocal = legendState.showMaxDepthMarker;
     _showPressureMarkersLocal = legendState.showPressureMarkers;
     _showGasSwitchMarkers = legendState.showGasSwitchMarkers;
@@ -6890,7 +6905,12 @@ class _DiveProfileChartState extends ConsumerState<DiveProfileChart> {
   /// The event's name, plus the value at its timestamp in the diver's unit
   /// for the metric events the Suunto app also annotates (issue #1523).
   String _eventLabelWithValue(ProfileEvent event, UnitFormatter units) {
-    final base = event.markerLabel;
+    // The exact imported (Suunto) label when present, otherwise the generic
+    // event name through the active locale (issue #1523 + #1629).
+    final d = event.description?.trim();
+    final base = (d != null && d.isNotEmpty)
+        ? d
+        : event.eventType.localizedName(context.l10n);
     final suffix = switch (event.eventType) {
       ProfileEventType.ascentRateWarning ||
       ProfileEventType.ascentRateCritical => _ascentRateAt(

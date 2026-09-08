@@ -113,6 +113,9 @@ import 'package:submersion/features/tank_presets/domain/entities/tank_preset_ent
 import 'package:submersion/features/tank_presets/domain/services/default_tank_preset_resolver.dart';
 import 'package:submersion/features/tank_presets/presentation/providers/tank_preset_providers.dart';
 import 'package:submersion/core/utils/log_failure.dart';
+import 'package:submersion/features/equipment/presentation/utils/equipment_enum_display.dart';
+import 'package:submersion/features/weight_planner/presentation/widgets/weight_enum_display.dart';
+import 'package:submersion/features/dive_log/presentation/formatters/altitude_group_label.dart';
 
 const _createNewSiteSentinel = '__create_new__';
 const _createNewDiveCenterSentinel = '__create_new_dive_center__';
@@ -126,11 +129,24 @@ const _createNewTripSentinel = '__create_new_trip__';
 /// under de/es/it that dot is the GROUPING separator, so a diver who opened a
 /// dive and saved it untouched would store ten times the depth (#1091).
 ///
-/// This page keeps trailing zeros (a weight seeds as "2.0"), so it uses
+/// This page keeps trailing zeros (a depth seeds as "12.0"), so it uses
 /// [formatFixedForInput] rather than the trailing-zero-dropping
 /// [formatRoundedForInput] the other forms use.
 String _seedDecimal(double value, int fractionDigits) =>
     formatFixedForInput(value, fractionDigits);
+
+/// A weight already converted to the diver's display unit, rendered for
+/// seeding an editable field.
+///
+/// Weight has no pinned display precision the way depth and temperature do: a
+/// diver trims with 0.25 kg (or fractional-lb) increments, so seeding at one
+/// decimal snapped a stored 0.65 kg to "0.7", and opening a dive and saving it
+/// untouched then persisted the rounded value (#1609). Three decimals in the
+/// display unit covers the increments a diver actually trims with (0.25 kg,
+/// fractional lb) while still hiding the float tail a kg-to-lb conversion
+/// leaves; trailing zeros are dropped so a clean 2 kg still seeds as "2".
+String _seedWeight(double displayValue) =>
+    formatRoundedForInput(displayValue, 3);
 
 /// [value] rendered for seeding a whole-number field, paired with
 /// [parseUserInt]. Grouping is off, so this is digit-only text.
@@ -743,7 +759,7 @@ class _DiveEditPageState extends ConsumerState<DiveEditPage> {
           _weightingFeedback = dive.weightingFeedback;
           _weightingFeedbackAmountController.text =
               dive.weightingFeedbackKg != null
-              ? _seedDecimal(units.convertWeight(dive.weightingFeedbackKg!), 1)
+              ? _seedWeight(units.convertWeight(dive.weightingFeedbackKg!))
               : '';
 
           // Load tags
@@ -3311,7 +3327,7 @@ class _DiveEditPageState extends ConsumerState<DiveEditPage> {
                       ),
                     ),
                     title: Text(item.name),
-                    subtitle: Text(item.type.displayName),
+                    subtitle: Text(item.type.localizedName(context.l10n)),
                     trailing: IconButton(
                       icon: const Icon(Icons.close, size: 18),
                       tooltip:
@@ -3887,7 +3903,7 @@ class _DiveEditPageState extends ConsumerState<DiveEditPage> {
 
   String _conditionsSummary(UnitFormatter units) {
     return [
-      if (_waterType != null) _waterType!.displayName,
+      if (_waterType != null) _waterType!.localizedName(context.l10n),
       if (_waterTempController.text.isNotEmpty)
         '${_waterTempController.text} ${units.temperatureSymbol}',
       // Through the formatter rather than hand-concatenated, so the summary
@@ -4411,7 +4427,7 @@ class _DiveEditPageState extends ConsumerState<DiveEditPage> {
               items: WeightType.values.map((type) {
                 return DropdownMenuItem(
                   value: type,
-                  child: Text(type.displayName),
+                  child: Text(type.localizedName(context.l10n)),
                 );
               }).toList(),
               onChanged: (value) {
@@ -4427,9 +4443,7 @@ class _DiveEditPageState extends ConsumerState<DiveEditPage> {
           Expanded(
             flex: 1,
             child: TextFormField(
-              initialValue: displayAmount > 0
-                  ? _seedDecimal(displayAmount, 1)
-                  : '',
+              initialValue: displayAmount > 0 ? _seedWeight(displayAmount) : '',
               decoration: InputDecoration(
                 labelText: units.weightSymbol,
                 isDense: true,
@@ -5215,7 +5229,7 @@ class _DiveEditPageState extends ConsumerState<DiveEditPage> {
     final group = AltitudeGroup.fromAltitude(altitudeMeters);
 
     if (group == AltitudeGroup.seaLevel) return null;
-    return '${group.displayName} - ${group.rangeDescription}';
+    return '${group.localizedName(context.l10n)} - ${group.localizedRange(context.l10n)}';
   }
 
   /// Get warning color for altitude dives based on altitude group.
