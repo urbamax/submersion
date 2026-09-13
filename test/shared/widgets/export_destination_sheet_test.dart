@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:submersion/core/services/export/csv/codec/csv_export_units.dart';
 import 'package:submersion/l10n/arb/app_localizations.dart';
 import 'package:submersion/shared/widgets/export_destination_sheet.dart';
 
@@ -42,6 +43,7 @@ Future<ValueGetter<Object?>> _pumpSheetHost(WidgetTester tester) async {
 Future<ValueGetter<Object?>> _pumpOptionsHost(
   WidgetTester tester, {
   bool showRawDataToggle = true,
+  bool showDiveContentToggles = false,
 }) async {
   Object? result = #pending;
   await tester.pumpWidget(
@@ -61,6 +63,40 @@ Future<ValueGetter<Object?>> _pumpOptionsHost(
                 context,
                 title: 'Dive Log UDDF',
                 showRawDataToggle: showRawDataToggle,
+                showDiveContentToggles: showDiveContentToggles,
+              );
+            },
+            child: const Text('open'),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.text('open'));
+  await tester.pumpAndSettle();
+  return () => result;
+}
+
+/// Pumps a host for the sheet with the CSV unit choice (#1813).
+Future<ValueGetter<Object?>> _pumpCsvHost(
+  WidgetTester tester, {
+  bool showCsvUnitsToggle = true,
+}) async {
+  Object? result = #pending;
+  await tester.pumpWidget(
+    MaterialApp(
+      locale: const Locale('en'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => ElevatedButton(
+            onPressed: () async {
+              result = await showExportDestinationSheetWithOptions(
+                context,
+                title: 'Dive Log CSV',
+                showCsvUnitsToggle: showCsvUnitsToggle,
+                initialCsvUnitMode: CsvUnitMode.myUnits,
               );
             },
             child: const Text('open'),
@@ -130,7 +166,7 @@ void main() {
 
     expect(result(), isA<ExportChoice>());
     expect((result()! as ExportChoice).destination, ExportDestination.share);
-    expect((result()! as ExportChoice).includeRawData, isTrue);
+    expect((result()! as ExportChoice).options.includeRawData, isTrue);
   });
 
   testWidgets('unchecking the toggle carries through to the choice', (
@@ -154,7 +190,7 @@ void main() {
       (result()! as ExportChoice).destination,
       ExportDestination.saveToFile,
     );
-    expect((result()! as ExportChoice).includeRawData, isFalse);
+    expect((result()! as ExportChoice).options.includeRawData, isFalse);
   });
 
   testWidgets('no toggle is offered for formats with no raw bytes', (
@@ -167,6 +203,87 @@ void main() {
     await tester.tap(find.text('Share'));
     await tester.pumpAndSettle();
 
-    expect((result()! as ExportChoice).includeRawData, isTrue);
+    expect((result()! as ExportChoice).options.includeRawData, isTrue);
+  });
+
+  testWidgets('the dive content toggles appear only on request', (
+    tester,
+  ) async {
+    await _pumpOptionsHost(tester);
+
+    expect(find.text('Include dive participants'), findsNothing);
+    expect(find.text('Include gear'), findsNothing);
+  });
+
+  testWidgets('the dive content toggles start checked', (tester) async {
+    final result = await _pumpOptionsHost(tester, showDiveContentToggles: true);
+
+    expect(find.text('Include dive participants'), findsOneWidget);
+    expect(find.text('Include gear'), findsOneWidget);
+    expect(
+      tester
+          .widgetList<CheckboxListTile>(find.byType(CheckboxListTile))
+          .map((t) => t.value),
+      [true, true, true],
+    );
+
+    await tester.tap(find.text('Share'));
+    await tester.pumpAndSettle();
+
+    final options = (result()! as ExportChoice).options;
+    expect(options.includeRawData, isTrue);
+    expect(options.includeParticipants, isTrue);
+    expect(options.includeGear, isTrue);
+  });
+
+  testWidgets('unticking participants and gear carries into the options', (
+    tester,
+  ) async {
+    final result = await _pumpOptionsHost(tester, showDiveContentToggles: true);
+
+    await tester.tap(find.text('Include dive participants'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Include gear'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Save to File'));
+    await tester.pumpAndSettle();
+
+    final choice = result()! as ExportChoice;
+    expect(choice.destination, ExportDestination.saveToFile);
+    expect(choice.options.includeRawData, isTrue);
+    expect(choice.options.includeParticipants, isFalse);
+    expect(choice.options.includeGear, isFalse);
+  });
+
+  testWidgets('the sheet sizes to its content, not the screen', (tester) async {
+    // isScrollControlled lifts the 9/16 height cap so the three checkboxes
+    // fit on a phone; the scroll view inside must still size to its content,
+    // or every export sheet would open full screen.
+    await _pumpSheetHost(tester);
+
+    final screenHeight =
+        tester.view.physicalSize.height / tester.view.devicePixelRatio;
+    expect(
+      tester.getSize(find.byType(SingleChildScrollView)).height,
+      lessThan(screenHeight / 2),
+    );
+  });
+
+  testWidgets('the CSV unit choice is returned with the destination', (
+    tester,
+  ) async {
+    final result = await _pumpCsvHost(tester);
+    await tester.tap(find.text('Metric'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.share));
+    await tester.pumpAndSettle();
+    final choice = result()! as ExportChoice;
+    expect(choice.destination, ExportDestination.share);
+    expect(choice.csvUnitMode, CsvUnitMode.metric);
+  });
+
+  testWidgets('no unit choice unless asked for', (tester) async {
+    await _pumpCsvHost(tester, showCsvUnitsToggle: false);
+    expect(find.text('My units'), findsNothing);
   });
 }

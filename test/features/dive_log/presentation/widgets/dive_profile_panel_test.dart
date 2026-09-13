@@ -21,6 +21,7 @@ import 'package:submersion/features/dive_log/presentation/widgets/dive_profile_c
 import 'package:submersion/features/dive_log/presentation/widgets/dive_profile_panel.dart';
 import 'package:submersion/features/dive_sites/domain/entities/dive_site.dart';
 import 'package:submersion/features/divers/presentation/providers/diver_providers.dart';
+import 'package:submersion/features/equipment/domain/entities/gear_link.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
 
 import '../../../../helpers/mock_providers.dart';
@@ -62,7 +63,7 @@ Dive _makeDiveWithProfile({
             temperature: 22.0,
           ),
         ),
-    equipment: const [],
+    gear: looseGear(const []),
     notes: '',
     photoIds: const [],
     sightings: const [],
@@ -81,7 +82,7 @@ Dive _makeDiveNoProfile({String id = 'dive-no-profile'}) {
     runtime: const Duration(minutes: 35),
     tanks: const [],
     profile: const [],
-    equipment: const [],
+    gear: looseGear(const []),
     notes: '',
     photoIds: const [],
     sightings: const [],
@@ -117,6 +118,13 @@ Future<void> _pumpUntilChartProfile(
   );
 }
 
+/// The table lists [diveId]. The panel previews the highlight only while the
+/// active filter lists its dive (dive_profile_panel_filter_test.dart); these
+/// tests are about the chart, so the highlighted dive is always listed.
+Override _listedInTable(String diveId) => allDivesForTableProvider.overrideWith(
+  (ref) => AsyncValue.data([createTestDiveWithBottomTime(id: diveId)]),
+);
+
 Widget _buildPanel({
   String? highlightedDiveId,
   Dive? diveToReturn,
@@ -133,6 +141,7 @@ Widget _buildPanel({
         (ref) => MockCurrentDiverIdNotifier(),
       ),
       highlightedDiveIdProvider.overrideWith((ref) => highlightedDiveId),
+      if (highlightedDiveId != null) _listedInTable(highlightedDiveId),
       if (highlightedDiveId != null)
         diveProvider(
           highlightedDiveId,
@@ -233,6 +242,7 @@ void main() {
               (ref) => MockCurrentDiverIdNotifier(),
             ),
             highlightedDiveIdProvider.overrideWith((ref) => 'loading-dive'),
+            _listedInTable('loading-dive'),
             diveProvider(
               'loading-dive',
             ).overrideWith((ref) => Future.value(null)),
@@ -395,7 +405,7 @@ void main() {
           const DiveProfilePoint(timestamp: 0, depth: 10.0, temperature: 22.0),
           const DiveProfilePoint(timestamp: 30, depth: 20.0, temperature: 22.0),
         ],
-        equipment: const [],
+        gear: looseGear(const []),
         notes: '',
         photoIds: const [],
         sightings: const [],
@@ -603,6 +613,7 @@ void main() {
               (ref) => MockCurrentDiverIdNotifier(),
             ),
             highlightedDiveIdProvider.overrideWith((ref) => 'dive-switch-1'),
+            _listedInTable('dive-switch-1'),
             diveProvider(
               'dive-switch-1',
             ).overrideWith((ref) => Future.value(dive1)),
@@ -715,7 +726,7 @@ void main() {
             temperature: 22.0,
           ),
         ),
-        equipment: const [],
+        gear: looseGear(const []),
         notes: '',
         photoIds: const [],
         sightings: const [],
@@ -824,6 +835,7 @@ void main() {
               (ref) => MockCurrentDiverIdNotifier(),
             ),
             highlightedDiveIdProvider.overrideWith((ref) => diveId),
+            _listedInTable(diveId),
             diveProvider(diveId).overrideWith((ref) => Future.value(dive)),
             diveDataSourcesProvider(
               diveId,

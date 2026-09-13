@@ -284,6 +284,7 @@ class GasMix {
     required this.index,
     required this.o2Percent,
     required this.hePercent,
+    this.usage,
   });
 
   int index;
@@ -292,8 +293,14 @@ class GasMix {
 
   double hePercent;
 
+  /// Gas usage from libdivecomputer's `dc_usage_t` (1=oxygen, 2=diluent,
+  /// 3=sidemount); null when the computer reported no usage (DC_USAGE_NONE).
+  /// Set on the gas mix itself, so it is available even when the mix has no
+  /// tank/transmitter record.
+  int? usage;
+
   Object encode() {
-    return <Object?>[index, o2Percent, hePercent];
+    return <Object?>[index, o2Percent, hePercent, usage];
   }
 
   static GasMix decode(Object result) {
@@ -302,6 +309,7 @@ class GasMix {
       index: result[0]! as int,
       o2Percent: result[1]! as double,
       hePercent: result[2]! as double,
+      usage: result[3] as int?,
     );
   }
 }
@@ -764,6 +772,7 @@ class DiveComputerHostApi {
   Future<void> startDownload(
     DiscoveredDevice device,
     String? fingerprint,
+    bool syncClock,
   ) async {
     final String pigeonVar_channelName =
         'dev.flutter.pigeon.libdivecomputer_plugin.DiveComputerHostApi.startDownload$pigeonVar_messageChannelSuffix';
@@ -774,7 +783,7 @@ class DiveComputerHostApi {
           binaryMessenger: pigeonVar_binaryMessenger,
         );
     final List<Object?>? pigeonVar_replyList =
-        await pigeonVar_channel.send(<Object?>[device, fingerprint])
+        await pigeonVar_channel.send(<Object?>[device, fingerprint, syncClock])
             as List<Object?>?;
     if (pigeonVar_replyList == null) {
       throw _createConnectionError(pigeonVar_channelName);
@@ -917,6 +926,7 @@ abstract class DiveComputerFlutterApi {
     int totalDives,
     String? serialNumber,
     String? firmwareVersion,
+    String? clockSyncStatus,
   );
 
   void onError(DiveComputerError error);
@@ -1082,11 +1092,13 @@ abstract class DiveComputerFlutterApi {
           );
           final String? arg_serialNumber = (args[1] as String?);
           final String? arg_firmwareVersion = (args[2] as String?);
+          final String? arg_clockSyncStatus = (args[3] as String?);
           try {
             api.onDownloadComplete(
               arg_totalDives!,
               arg_serialNumber,
               arg_firmwareVersion,
+              arg_clockSyncStatus,
             );
             return wrapResponse(empty: true);
           } on PlatformException catch (e) {

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:submersion/core/constants/enums.dart';
 import 'package:submersion/core/deco/entities/dive_environment.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart';
 import 'package:submersion/features/dive_planner/domain/entities/plan_segment.dart';
@@ -71,6 +72,7 @@ domain.DivePlan _plan({required double sacBottom, required double sacDeco}) =>
       gfHigh: 70,
       sacBottom: sacBottom,
       sacDeco: sacDeco,
+      problemSolvingMinutes: 0,
       segments: _segments(),
       tanks: const [_airTank],
       createdAt: DateTime(2026, 9, 2),
@@ -81,7 +83,7 @@ double _litersUsed(domain.DivePlan plan) =>
     const PlanEngine().compute(plan).tankUsages.single.litersUsed;
 
 void main() {
-  const env = DiveEnvironment.standard;
+  final env = DiveEnvironment.forConditions(waterType: WaterType.salt);
 
   test('only the descent and level legs are charged at the bottom SAC', () {
     // Raising the bottom SAC by 1 L/min must add exactly the descent leg's

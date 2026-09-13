@@ -7,12 +7,14 @@ import 'package:submersion/core/providers/provider.dart';
 import 'package:submersion/features/dive_log/data/repositories/dive_repository_impl.dart';
 import 'package:submersion/features/dive_log/data/services/dive_consolidation_service.dart';
 import 'package:submersion/features/dive_log/data/services/dive_merge_service.dart';
+import 'package:submersion/features/dive_log/data/services/dive_merge_snapshot.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart'
     as domain;
 import 'package:submersion/features/dive_log/presentation/providers/dive_providers.dart';
 import 'package:submersion/features/dive_log/presentation/widgets/combine_dives_dialog.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
 import 'package:submersion/l10n/arb/app_localizations.dart';
+import 'package:submersion/features/equipment/data/services/sensor_summary_scheduler.dart';
 
 import '../../../../helpers/fake_dive_consolidation_service.dart';
 
@@ -82,6 +84,35 @@ class _ThrowingMergeService implements DiveMergeService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+/// Fake [DiveMergeService] whose `apply` succeeds with merged dive 'm'.
+class _OkMergeService implements DiveMergeService {
+  @override
+  Future<DiveMergeOutcome> apply(List<String> diveIds) async =>
+      DiveMergeOutcome(
+        mergedDive: domain.Dive(id: 'm', dateTime: DateTime.utc(2026, 7, 1)),
+        snapshot: const DiveMergeSnapshot(
+          mergedDiveId: 'm',
+          diveRows: [],
+          tankRows: [],
+          weightRows: [],
+          customFieldRows: [],
+          equipmentRows: [],
+          diveTypeRows: [],
+          tagRows: [],
+          buddyRows: [],
+          sightingRows: [],
+          eventRows: [],
+          gasSwitchRows: [],
+          dataSourceRows: [],
+          tideRows: [],
+          mediaDiveIds: {},
+        ),
+      );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 /// Minimal SettingsNotifier override that returns default AppSettings.
 class _FakeSettingsNotifier extends StateNotifier<AppSettings>
     implements SettingsNotifier {
@@ -104,6 +135,7 @@ Future<void> pumpCombineDialog(
   DiveConsolidationService? consolidationService,
   List<String>? requestIds,
   DiveRepository? repository,
+  bool consolidateOnly = false,
 }) async {
   tester.view.physicalSize = const Size(1024, 768);
   tester.view.devicePixelRatio = 1.0;
@@ -129,6 +161,10 @@ Future<void> pumpCombineDialog(
           ),
       ],
       child: MaterialApp(
+        // The tests assert English literals; without a pinned locale the app
+        // resolves against the host machine's locale list and a translated
+        // UI makes every find.text miss.
+        locale: const Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
@@ -147,6 +183,7 @@ Future<void> pumpCombineDialog(
   showCombineDivesDialog(
     context: savedContext,
     diveIds: requestIds ?? dives.map((d) => d.id).toList(),
+    consolidateOnly: consolidateOnly,
   );
   await tester.pumpAndSettle();
 }
@@ -399,6 +436,89 @@ void main() {
         expect(find.text('Keep as one dive with both computers'), findsNothing);
       },
     );
+  });
+
+  group('opened for a duplicate finding (consolidateOnly)', () {
+    // The data quality inbox opens the dialog for a duplicate pair so the
+    // diver picks which recording survives (#1690). A duplicate never wants
+    // the sequential combine, so a pair that does not overlap is rejected the
+    // way the consolidation service would reject it.
+    testWidgets(
+      'a non-overlapping pair shows the not-overlapping error instead of a '
+      'sequential combine preview',
+      (tester) async {
+        await pumpCombineDialog(
+          tester,
+          dives: [
+            diveAt('a', DateTime.utc(2026, 7, 1, 9)),
+            diveAt('b', DateTime.utc(2026, 7, 1, 10)),
+          ],
+          consolidateOnly: true,
+        );
+
+        expect(
+          find.text(
+            "These dives don't overlap in time, so they can't be merged as "
+            'the same dive.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Combine into one dive'), findsNothing);
+        expect(find.text('Keep as one dive with both computers'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'an overlapping pair still shows the primary selector and confirm',
+      (tester) async {
+        await pumpCombineDialog(
+          tester,
+          dives: [
+            diveAt(
+              'a',
+              DateTime.utc(2026, 7, 1, 9),
+              diveComputerSerial: 'serial-a',
+            ),
+            diveAt(
+              'b',
+              DateTime.utc(2026, 7, 1, 9, 5),
+              diveComputerSerial: 'serial-b',
+            ),
+          ],
+          consolidateOnly: true,
+        );
+
+        expect(find.byType(RadioListTile<String>), findsNWidgets(2));
+        expect(
+          find.text('Keep as one dive with both computers'),
+          findsOneWidget,
+        );
+      },
+    );
+  });
+
+  testWidgets('a combine rebuilds the sensor summaries it changed', (
+    tester,
+  ) async {
+    // The condition engine reads the summaries; the originals are gone and
+    // the merged dive is new, so its summary is built now.
+    final requests = <String>[];
+    SensorSummaryScheduler.instance.summaryRequestListener = (ids, force) =>
+        requests.add('${(ids.toList()..sort()).join(',')}:$force');
+    addTearDown(
+      () => SensorSummaryScheduler.instance.summaryRequestListener = null,
+    );
+    await pumpCombineDialog(
+      tester,
+      dives: [
+        diveAt('a', DateTime.utc(2026, 7, 1, 9)),
+        diveAt('b', DateTime.utc(2026, 7, 1, 10)),
+      ],
+      mergeService: _OkMergeService(),
+    );
+    await tester.tap(find.text('Combine into one dive'));
+    await tester.pumpAndSettle();
+    expect(requests, ['a,b,m:true']);
   });
 
   testWidgets('apply failure closes dialog and shows error snackbar', (

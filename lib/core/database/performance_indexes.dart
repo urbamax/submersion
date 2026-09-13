@@ -116,6 +116,14 @@ const List<PerformanceIndex> kPerformanceIndexes = [
         'CREATE INDEX IF NOT EXISTS idx_dive_tanks_dive_id '
         'ON dive_tanks(dive_id)',
   ),
+  // v210: deleting a gear item, locally or from a peer's tombstone, finds
+  // the cylinders linked to it; so does SQLite's own ON DELETE SET NULL.
+  (
+    name: 'idx_dive_tanks_equipment',
+    ddl:
+        'CREATE INDEX IF NOT EXISTS idx_dive_tanks_equipment '
+        'ON dive_tanks(equipment_id)',
+  ),
   (
     name: 'idx_dive_equipment_dive_id',
     ddl:
@@ -178,6 +186,18 @@ const List<PerformanceIndex> kPerformanceIndexes = [
     ddl:
         'CREATE INDEX IF NOT EXISTS idx_equipment_attributes_key_num '
         'ON equipment_attributes(attr_key, value_num)',
+  ),
+  (
+    name: 'idx_equipment_components_parent',
+    ddl:
+        'CREATE INDEX IF NOT EXISTS idx_equipment_components_parent '
+        'ON equipment_components(parent_equipment_id)',
+  ),
+  (
+    name: 'idx_equipment_components_component',
+    ddl:
+        'CREATE INDEX IF NOT EXISTS idx_equipment_components_component '
+        'ON equipment_components(component_equipment_id)',
   ),
   (
     name: 'idx_dive_data_sources_dive_id',

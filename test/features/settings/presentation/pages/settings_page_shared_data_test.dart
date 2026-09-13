@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:submersion/core/constants/enums.dart';
+import 'package:submersion/features/equipment/domain/entities/equipment_finding.dart';
+import 'package:submersion/features/equipment/domain/models/equipment_arrangement.dart';
 import 'package:submersion/core/constants/gas_consumption_display.dart';
 import 'package:submersion/core/constants/gas_model.dart';
 import 'package:submersion/features/dive_log/domain/entities/safety_finding.dart';
@@ -94,6 +97,16 @@ class _FakeTripRepository implements TripRepository {
 
 /// Fake AppSettingsRepository that tracks writes without DB access.
 class _FakeAppSettingsRepository implements AppSettingsRepository {
+  /// The gear arrangement is not exercised by these tests; the notifier falls
+  /// back to EquipmentArrangement.defaults when the read returns null.
+  @override
+  Future<EquipmentArrangement?> getEquipmentArrangement() async => null;
+
+  @override
+  Future<void> setEquipmentArrangement(
+    EquipmentArrangement arrangement,
+  ) async {}
+
   bool _shareByDefault = false;
   bool setShareByDefaultCalled = false;
   bool? lastSetValue;
@@ -181,6 +194,15 @@ class _MockSettingsNotifier extends StateNotifier<AppSettings>
   Future<void> setSafetyReviewEnabled(bool value) async =>
       state = state.copyWith(safetyReviewEnabled: value);
   @override
+  Future<void> setColdWaterThresholdC(double value) async =>
+      state = state.copyWith(coldWaterThresholdC: value);
+  @override
+  Future<void> setDeepDiveThresholdM(double value) async =>
+      state = state.copyWith(deepDiveThresholdM: value);
+  @override
+  Future<void> setHighO2ThresholdPercent(double value) async =>
+      state = state.copyWith(highO2ThresholdPercent: value);
+  @override
   Future<void> setNoFlyPreset(NoFlyPreset preset) async =>
       state = state.copyWith(noFlyPreset: preset);
   @override
@@ -227,6 +249,24 @@ class _MockSettingsNotifier extends StateNotifier<AppSettings>
   }
 
   @override
+  Future<void> setConditionEngineEnabled(bool value) async =>
+      state = state.copyWith(conditionEngineEnabled: value);
+
+  @override
+  Future<void> setConditionRuleEnabled(
+    ConditionRuleId rule,
+    bool enabled,
+  ) async {
+    final rules = {...state.conditionDisabledRules};
+    if (enabled) {
+      rules.remove(rule.dbValue);
+    } else {
+      rules.add(rule.dbValue);
+    }
+    state = state.copyWith(conditionDisabledRules: rules);
+  }
+
+  @override
   Future<void> setDefaultShowGasTimeline(bool value) async =>
       state = state.copyWith(defaultShowGasTimeline: value);
   @override
@@ -257,6 +297,11 @@ class _MockSettingsNotifier extends StateNotifier<AppSettings>
   @override
   Future<void> setGasModel(GasModel model) async =>
       state = state.copyWith(gasModel: model);
+
+  @override
+  Future<void> setDefaultPlannerWaterType(PlannerWaterType type) async =>
+      state = state.copyWith(defaultPlannerWaterType: type);
+
   @override
   Future<void> setDefaultCurrency(String currencyCode) async =>
       state = state.copyWith(defaultCurrency: currencyCode);
@@ -432,6 +477,12 @@ class _MockSettingsNotifier extends StateNotifier<AppSettings>
   @override
   Future<void> setShowMapBackgroundOnDiveCards(bool value) async =>
       state = state.copyWith(showMapBackgroundOnDiveCards: value);
+  @override
+  Future<void> setGroupTripsInDiveList(bool value) async =>
+      state = state.copyWith(groupTripsInDiveList: value);
+  @override
+  Future<void> setAutoTagImports(bool value) async =>
+      state = state.copyWith(autoTagImports: value);
   @override
   Future<void> setShowMapBackgroundOnSiteCards(bool value) async =>
       state = state.copyWith(showMapBackgroundOnSiteCards: value);

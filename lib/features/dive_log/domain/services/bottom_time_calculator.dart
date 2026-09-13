@@ -30,10 +30,16 @@ class BottomTimeCalculator {
   /// the profile is too small or degenerate. Samples need not be sorted;
   /// timestamps are seconds from dive start, depths are meters.
   ///
-  /// [totalDurationSeconds], when given, clamps the result: a corrupted
-  /// sample timeline (e.g. a driver bug that mis-times one sample) can put
-  /// the computed ascent start past the dive's own reported end, producing
-  /// a bottom time longer than the dive itself.
+  /// [totalDurationSeconds] is the dive's own reported total duration. When
+  /// given, the result never exceeds it: bottom time is a strict subset of
+  /// total dive time by definition, so a larger number is always wrong. The
+  /// case that motivated the bound (issue #1642) is a sample stream that
+  /// keeps logging at the surface after the dive ended; on a shallow dive the
+  /// threshold sits so close to the surface that wave action or sensor noise
+  /// in that tail can register as the start of the final ascent. The same
+  /// clamp also covers a corrupted sample timeline (e.g. a driver bug that
+  /// mis-times one sample), which can put the computed ascent start past the
+  /// dive's own reported end.
   static int? secondsFromSamples(
     List<({int timestamp, double depth})> samples, {
     double absoluteFloorMeters = defaultAbsoluteFloorMeters,

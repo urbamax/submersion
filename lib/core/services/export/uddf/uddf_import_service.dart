@@ -228,6 +228,20 @@ class UddfImportService {
         diveData['diveNumber'] = UddfImportParsers.parseUddfInt(diveNumText);
       }
 
+      // The dive's own entry fix, as both UDDF exporters write it (#1735).
+      if (UddfImportParsers.parseDiveGps(beforeElement, 'entry')
+          case final fix?) {
+        diveData['latitude'] = fix.latitude;
+        diveData['longitude'] = fix.longitude;
+      }
+
+      // The logbook owner's own role on the dive, as both UDDF exporters
+      // write it.
+      final diverRole = _getElementText(beforeElement, 'diverrole');
+      if (diverRole != null && diverRole.isNotEmpty) {
+        diveData['diverRoleId'] = diverRole;
+      }
+
       final airTempText = _getElementText(beforeElement, 'airtemperature');
       if (airTempText != null) {
         // UDDF stores temps in Kelvin
@@ -699,6 +713,12 @@ class UddfImportService {
         diveData['maxDepth'] = double.tryParse(maxDepthText);
       }
 
+      if (UddfImportParsers.parseDiveGps(afterElement, 'exit')
+          case final fix?) {
+        diveData['exitLatitude'] = fix.latitude;
+        diveData['exitLongitude'] = fix.longitude;
+      }
+
       final avgDepthText = _getElementText(afterElement, 'averagedepth');
       if (avgDepthText != null) {
         diveData['avgDepth'] = double.tryParse(avgDepthText);
@@ -854,6 +874,7 @@ class UddfImportService {
       diveData['buddy'] = buddyNames.join(', ');
     }
 
+    UddfImportParsers.dropInventedSubmersionProfile(diveElement, diveData);
     return diveData;
   }
 

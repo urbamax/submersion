@@ -50,7 +50,6 @@ extension TripSortFieldDisplay on TripSortField {
 extension EquipmentSortFieldDisplay on EquipmentSortField {
   String localizedName(AppLocalizations l10n) => switch (this) {
     EquipmentSortField.name => l10n.enum_sortField_name,
-    EquipmentSortField.type => l10n.enum_sortField_type,
     EquipmentSortField.purchaseDate => l10n.enum_sortField_purchaseDate,
     EquipmentSortField.lastServiceDate => l10n.enum_sortField_lastServiceDate,
     EquipmentSortField.serviceDue => l10n.enum_sortField_serviceDue,
@@ -94,5 +93,17 @@ extension MediaSortFieldDisplay on MediaSortField {
     MediaSortField.dateTaken => l10n.enum_sortField_dateTaken,
     MediaSortField.fileName => l10n.enum_sortField_fileName,
     MediaSortField.fileSize => l10n.enum_sortField_fileSize,
+  };
+}
+
+extension EquipmentItemSortFieldDisplay on EquipmentItemSortField {
+  String localizedName(AppLocalizations l10n) => switch (this) {
+    EquipmentItemSortField.name => l10n.enum_equipmentItemSortField_name,
+    EquipmentItemSortField.purchaseDate =>
+      l10n.enum_equipmentItemSortField_purchaseDate,
+    EquipmentItemSortField.dateAdded =>
+      l10n.enum_equipmentItemSortField_dateAdded,
+    EquipmentItemSortField.lastServiceDate =>
+      l10n.enum_equipmentItemSortField_lastServiceDate,
   };
 }

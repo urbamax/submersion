@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:submersion/core/constants/list_view_mode.dart';
 import 'package:submersion/core/utils/currency.dart';
 import 'package:submersion/core/utils/unit_formatter.dart';
+import 'package:submersion/features/equipment/presentation/widgets/observations_card.dart';
 import 'package:submersion/l10n/l10n_extension.dart';
 import 'package:submersion/shared/widgets/master_detail/detail_scroll_retainer.dart';
 import 'package:submersion/shared/widgets/master_detail/responsive_breakpoints.dart';
@@ -20,6 +21,7 @@ import 'package:submersion/features/equipment/domain/constants/equipment_attribu
 import 'package:submersion/features/equipment/domain/entities/equipment_attribute.dart';
 import 'package:submersion/features/equipment/domain/entities/equipment_item.dart';
 import 'package:submersion/features/equipment/domain/entities/service_clock_status.dart';
+import 'package:submersion/features/equipment/presentation/providers/equipment_component_providers.dart';
 import 'package:submersion/features/equipment/presentation/providers/equipment_providers.dart';
 import 'package:submersion/features/equipment/presentation/helpers/equipment_web_link_launcher.dart';
 import 'package:submersion/features/equipment/presentation/utils/equipment_attribute_l10n.dart';
@@ -27,6 +29,13 @@ import 'package:submersion/features/equipment/presentation/utils/equipment_attri
 import 'package:submersion/features/cylinder_configs/presentation/widgets/unit_configurations_card.dart';
 import 'package:submersion/features/media/presentation/helpers/document_open_helper.dart';
 import 'package:submersion/features/equipment/presentation/widgets/equipment_documents_section.dart';
+import 'package:submersion/features/equipment/domain/entities/condition_trend.dart';
+import 'package:submersion/features/equipment/presentation/widgets/children_card.dart';
+import 'package:submersion/features/equipment/presentation/widgets/components_card.dart';
+import 'package:submersion/features/equipment/presentation/widgets/condition_findings_card.dart';
+import 'package:submersion/features/equipment/presentation/widgets/condition_trend_card.dart';
+import 'package:submersion/features/equipment/presentation/widgets/exposure_card.dart';
+import 'package:submersion/features/equipment/presentation/widgets/installed_in_row.dart';
 import 'package:submersion/features/equipment/presentation/widgets/service_clocks_card.dart';
 import 'package:submersion/features/equipment/presentation/widgets/service_history_section.dart';
 import 'package:submersion/features/equipment/presentation/widgets/service_record_dialog.dart';
@@ -140,14 +149,23 @@ class _EquipmentDetailContent extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsProvider);
     final units = UnitFormatter(settings);
-    // Service state now derives from the clock engine, not the legacy
-    // isServiceDue getter: any overdue clock lights the header.
-    final isServiceOverdue =
+    // Any overdue clock lights the header: the item's own, or any part's
+    // through the rollup (issue #1487). Own clocks are read separately so a
+    // retired item, absent from the active rollup, still shows its state.
+    final ownOverdue =
         ref
             .watch(serviceClockStatusesProvider(equipmentId))
             .value
             ?.any((s) => s.severity == ServiceClockSeverity.overdue) ??
         false;
+    final rollupOverdue =
+        ref
+            .watch(equipmentRollupClockProvider)
+            .value?[equipmentId]
+            ?.status
+            .severity ==
+        ServiceClockSeverity.overdue;
+    final isServiceOverdue = ownOverdue || rollupOverdue;
 
     final body = SingleChildScrollView(
       controller: DetailScrollController.maybeOf(context),
@@ -168,6 +186,26 @@ class _EquipmentDetailContent extends ConsumerWidget {
               serviceKindId: status.kind.id,
             ),
           ),
+          const SizedBox(height: 24),
+          ExposureCard(equipmentId: equipmentId),
+          // The findings and trend cards carry their own top gap and render
+          // nothing when they have nothing to say, so the page never shows
+          // a blank slot for a rule engine.
+          ConditionFindingsCard(equipment: equipment),
+          ConditionTrendCard(equipment: equipment),
+          if (equipment.type == EquipmentType.rebreather)
+            ConditionTrendCard(
+              equipment: equipment,
+              kind: ConditionTrendKind.scrubberMinutes,
+            ),
+          if (childHostTypes.contains(equipment.type)) ...[
+            const SizedBox(height: 24),
+            ChildrenCard(equipment: equipment),
+          ],
+          const SizedBox(height: 24),
+          ObservationsCard(equipment: equipment),
+          const SizedBox(height: 24),
+          ComponentsCard(equipmentId: equipmentId),
           // Only rebreathers own configurations; every other type would show
           // a card that can never be anything but empty.
           if (equipment.type == EquipmentType.rebreather) ...[
@@ -428,6 +466,13 @@ class _EquipmentDetailContent extends ConsumerWidget {
   ) {
     final diveCountAsync = ref.watch(equipmentDiveCountProvider(equipmentId));
     final tripCountAsync = ref.watch(equipmentTripCountProvider(equipmentId));
+    // The item this one is installed in. A parent id naming nothing (a
+    // parent row that never arrived) resolves to null and shows no row.
+    final parentId = equipment.parentEquipmentId;
+    final host = parentId == null
+        ? null
+        : ref.watch(equipmentItemProvider(parentId)).value;
+    final showsInstallAge = InstalledInRow.showsInstallAge(equipment, host);
 
     return Card(
       child: Padding(
@@ -445,6 +490,8 @@ class _EquipmentDetailContent extends ConsumerWidget {
               context.l10n.equipment_detail_statusLabel,
               equipment.status.localizedName(context.l10n),
             ),
+            if (host != null)
+              InstalledInRow(part: equipment, host: host, units: units),
             diveCountAsync.when(
               data: (count) => Semantics(
                 button: count > 0,
@@ -602,10 +649,17 @@ class _EquipmentDetailContent extends ConsumerWidget {
                 equipment.serialNumber!,
               ),
             // Curated specs in catalog order, then custom fields. The
-            // purchase group is held back to the purchase block below.
-            for (final def in EquipmentAttributeCatalog.attributesFor(
-              equipment.type,
-            ).where((d) => d.group == AttributeGroup.spec))
+            // purchase group is held back to the purchase block below, and
+            // the install date to the installed-in row while it shows one.
+            for (final def
+                in EquipmentAttributeCatalog.attributesFor(
+                  equipment.type,
+                ).where(
+                  (d) =>
+                      d.group == AttributeGroup.spec &&
+                      !(showsInstallAge &&
+                          d.key == EquipmentAttrKeys.installedDate),
+                ))
               if (equipment.attributes.firstWhereOrNull(
                     (a) => !a.isCustom && a.key == def.key,
                   )

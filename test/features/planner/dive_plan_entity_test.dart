@@ -29,7 +29,7 @@ void main() {
   group('DivePlan', () {
     test('SAC defaults derive from bottom SAC', () {
       final plan = _plan(sacBottom: 15.0);
-      expect(plan.sacDecoEffective, closeTo(12.0, 1e-9));
+      expect(plan.sacDecoEffective, 15.0);
       expect(plan.sacStressedEffective, closeTo(37.5, 1e-9));
     });
 
@@ -104,6 +104,7 @@ void main() {
         mode: PlanMode.ccr,
         altitude: 1500.0,
         waterType: WaterType.fresh,
+        salinityPpt: 18.0,
         gfLow: 35,
         gfHigh: 75,
         descentRate: 20.0,
@@ -125,6 +126,12 @@ void main() {
         deviationTimeMinutes: 10,
         turnPressureRule: TurnPressureRule.thirds,
         turnPressureFraction: 0.4,
+        sacFactor: 3.0,
+        problemSolvingMinutes: 4,
+        ppO2Bottom: 1.3,
+        ppO2Deco: 1.5,
+        bestMixEndMeters: 28.0,
+        o2Narcotic: false,
         segments: [segment],
         tanks: const [tank],
       );
@@ -138,6 +145,7 @@ void main() {
       expect(updated.mode, PlanMode.ccr);
       expect(updated.altitude, 1500.0);
       expect(updated.waterType, WaterType.fresh);
+      expect(updated.salinityPpt, 18.0);
       expect(updated.gfLow, 35);
       expect(updated.gfHigh, 75);
       expect(updated.descentRate, 20.0);
@@ -159,6 +167,12 @@ void main() {
       expect(updated.deviationTimeMinutes, 10);
       expect(updated.turnPressureRule, TurnPressureRule.thirds);
       expect(updated.turnPressureFraction, 0.4);
+      expect(updated.sacFactor, 3.0);
+      expect(updated.problemSolvingMinutes, 4);
+      expect(updated.ppO2Bottom, 1.3);
+      expect(updated.ppO2Deco, 1.5);
+      expect(updated.bestMixEndMeters, 28.0);
+      expect(updated.o2Narcotic, false);
       expect(updated.segments, [segment]);
       expect(updated.tanks, const [tank]);
     });
@@ -168,6 +182,7 @@ void main() {
         siteId: 'site',
         altitude: 100,
         waterType: WaterType.salt,
+        salinityPpt: 22.0,
         airBreaks: const AirBreakPolicy(),
         sacDeco: 12,
         sacStressed: 40,
@@ -179,11 +194,15 @@ void main() {
         setpointSwitchDepth: 10,
         turnPressureRule: TurnPressureRule.halves,
         turnPressureFraction: 0.5,
+        ppO2Bottom: 1.3,
+        ppO2Deco: 1.5,
+        o2Narcotic: false,
       );
       final cleared = full.copyWith(
         clearSiteId: true,
         clearAltitude: true,
         clearWaterType: true,
+        clearSalinityPpt: true,
         clearAirBreaks: true,
         clearSacDeco: true,
         clearSacStressed: true,
@@ -195,10 +214,14 @@ void main() {
         clearSetpointSwitchDepth: true,
         clearTurnPressureRule: true,
         clearTurnPressureFraction: true,
+        clearPpO2Bottom: true,
+        clearPpO2Deco: true,
+        clearO2Narcotic: true,
       );
       expect(cleared.siteId, isNull);
       expect(cleared.altitude, isNull);
       expect(cleared.waterType, isNull);
+      expect(cleared.salinityPpt, isNull);
       expect(cleared.airBreaks, isNull);
       expect(cleared.sacDeco, isNull);
       expect(cleared.sacStressed, isNull);
@@ -210,6 +233,19 @@ void main() {
       expect(cleared.setpointSwitchDepth, isNull);
       expect(cleared.turnPressureRule, isNull);
       expect(cleared.turnPressureFraction, isNull);
+      expect(cleared.ppO2Bottom, isNull);
+      expect(cleared.ppO2Deco, isNull);
+      expect(cleared.o2Narcotic, isNull);
+    });
+
+    test('gas options default to Subsurface-style values', () {
+      final plan = _plan();
+      expect(plan.sacFactor, 2.0);
+      expect(plan.problemSolvingMinutes, 2);
+      expect(plan.ppO2Bottom, isNull);
+      expect(plan.ppO2Deco, isNull);
+      expect(plan.bestMixEndMeters, 30.0);
+      expect(plan.o2Narcotic, isNull);
     });
 
     test('equality tracks props', () {

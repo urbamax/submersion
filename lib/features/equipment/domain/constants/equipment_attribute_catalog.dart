@@ -32,12 +32,14 @@ enum AttributeGroup {
 /// Unit dimension for number attributes; drives UnitFormatter conversion.
 /// thicknessMm always displays in mm (industry convention in every market).
 ///
-/// Every dimension stores its canonical metric value, which for all of them
-/// except the two per-time ones is also what a metric diver reads:
+/// Every dimension stores its canonical metric value, which is also what a
+/// metric diver reads for all of them except these three:
 /// - [speedMps] stores m/s (matching wind speed and GPS track speed) and
 ///   displays as m/min or ft/min, the way a DPV's rated speed is quoted.
 /// - [durationH] stores hours and displays as minutes, the way a scooter's
 ///   rated run time is quoted.
+/// - [shortLengthM] stores metres and displays as cm or inches, the way a
+///   hose or an SMB is sold (issue #1804): a 15" hose, not a 1.25 ft one.
 enum AttributeDimension {
   none,
   thicknessMm,
@@ -45,6 +47,7 @@ enum AttributeDimension {
   pressureBar,
   massKg,
   lengthM,
+  shortLengthM,
   depthM,
   speedMps,
   durationH,
@@ -65,10 +68,23 @@ abstract final class EquipmentAttrKeys {
   static const insulationLevel = 'insulation_level';
   static const fillMaterial = 'fill_material';
 
+  // Hose kind (issue #1805): LP regulator, HP gauge/transmitter, LPI inflator.
+  static const hoseType = 'hose_type';
+
+  // Cylinder specs (issue #1365): read by the transmitter registry editor.
+  static const volumeL = 'volume_l';
+  static const workingPressureBar = 'working_pressure_bar';
+  static const tankMaterial = 'tank_material';
+
   // Purchase record (issue #1517).
   static const sku = 'sku';
   static const retailer = 'retailer';
   static const productUrl = 'product_url';
+
+  // Child items (o2Cell, battery).
+  static const cellSlot = 'cell_slot';
+  static const installedDate = 'installed_date';
+  static const rechargeable = 'rechargeable';
 }
 
 class EquipmentAttributeDef {
@@ -174,6 +190,29 @@ abstract final class EquipmentAttributeCatalog {
     ],
   );
 
+  // Shared by a whole and its parts (issue #1487): a first stage has the
+  // regulator's connection, a wing the BCD's lift, a housing the camera's
+  // depth rating.
+  static const _connection = EquipmentAttributeDef(
+    key: 'connection',
+    kind: AttributeKind.choice,
+    choiceKeys: ['din', 'yoke'],
+  );
+  static const _coldWaterRated = EquipmentAttributeDef(
+    key: 'cold_water_rated',
+    kind: AttributeKind.flag,
+  );
+  static const _liftCapacity = EquipmentAttributeDef(
+    key: EquipmentAttrKeys.liftCapacityKg,
+    kind: AttributeKind.number,
+    dimension: AttributeDimension.massKg,
+  );
+  static const _depthRating = EquipmentAttributeDef(
+    key: 'depth_rating_m',
+    kind: AttributeKind.number,
+    dimension: AttributeDimension.depthM,
+  );
+
   static const Map<EquipmentType, List<EquipmentAttributeDef>> _byType = {
     EquipmentType.wetsuit: [
       _size,
@@ -220,17 +259,17 @@ abstract final class EquipmentAttributeCatalog {
     ],
     EquipmentType.tank: [
       EquipmentAttributeDef(
-        key: 'volume_l',
+        key: EquipmentAttrKeys.volumeL,
         kind: AttributeKind.number,
         dimension: AttributeDimension.volumeL,
       ),
       EquipmentAttributeDef(
-        key: 'working_pressure_bar',
+        key: EquipmentAttrKeys.workingPressureBar,
         kind: AttributeKind.number,
         dimension: AttributeDimension.pressureBar,
       ),
       EquipmentAttributeDef(
-        key: 'tank_material',
+        key: EquipmentAttrKeys.tankMaterial,
         kind: AttributeKind.choice,
         choiceKeys: ['aluminum', 'steel', 'carbon_composite'],
       ),
@@ -294,13 +333,25 @@ abstract final class EquipmentAttributeCatalog {
         dimension: AttributeDimension.depthM,
       ),
     ],
-    EquipmentType.regulator: [
+    EquipmentType.regulator: [_connection, _coldWaterRated],
+    EquipmentType.firstStage: [_connection, _coldWaterRated],
+    EquipmentType.secondStage: [_coldWaterRated],
+    EquipmentType.hose: [
+      // LP (low pressure, a regulator hose), HP (high pressure, to an SPG or
+      // transmitter) or LPI (the quick-disconnect inflator hose), issue
+      // #1805. A choice so the equipment and dive filters can match on it.
       EquipmentAttributeDef(
-        key: 'connection',
+        key: EquipmentAttrKeys.hoseType,
         kind: AttributeKind.choice,
-        choiceKeys: ['din', 'yoke'],
+        choiceKeys: ['lp', 'hp', 'lpi'],
       ),
-      EquipmentAttributeDef(key: 'cold_water_rated', kind: AttributeKind.flag),
+      // Stored in metres, shown in cm or inches: hoses are sold as 22" or
+      // 56 cm, never as 1.8 ft or 0.56 m (issue #1804).
+      EquipmentAttributeDef(
+        key: 'hose_length_m',
+        kind: AttributeKind.number,
+        dimension: AttributeDimension.shortLengthM,
+      ),
     ],
     EquipmentType.bcd: [
       _size,
@@ -309,10 +360,49 @@ abstract final class EquipmentAttributeCatalog {
         kind: AttributeKind.choice,
         choiceKeys: ['jacket', 'back_inflate', 'wing', 'sidemount'],
       ),
+      _liftCapacity,
+    ],
+    EquipmentType.backplate: [
       EquipmentAttributeDef(
-        key: EquipmentAttrKeys.liftCapacityKg,
+        key: 'plate_material',
+        kind: AttributeKind.choice,
+        choiceKeys: ['steel', 'aluminum', 'carbon_fiber'],
+      ),
+    ],
+    EquipmentType.wing: [_liftCapacity],
+    EquipmentType.harness: [_size],
+    // Rig accessories (#1877).
+    EquipmentType.tankBand: [
+      EquipmentAttributeDef(
+        key: 'band_style',
+        kind: AttributeKind.choice,
+        choiceKeys: ['cam_strap', 'stainless_band'],
+      ),
+    ],
+    EquipmentType.weightPocket: [
+      // The Weights type's key and wording, offering the placements a pocket
+      // can have: ankle weights strap on and have no pocket. Kept an in-order
+      // subset of the Weights list, because a lookup by key alone
+      // ([defFor], which the active-filter label orders its options by)
+      // resolves to that list.
+      EquipmentAttributeDef(
+        key: EquipmentAttrKeys.weightStyle,
+        kind: AttributeKind.choice,
+        choiceKeys: ['belt', 'integrated', 'trim'],
+      ),
+      // What the pocket holds, not what it weighs: `dry_weight_kg` stays the
+      // pouch's own mass.
+      EquipmentAttributeDef(
+        key: 'pocket_capacity_kg',
         kind: AttributeKind.number,
         dimension: AttributeDimension.massKg,
+      ),
+    ],
+    EquipmentType.gearPocket: [
+      EquipmentAttributeDef(
+        key: 'pocket_mount',
+        kind: AttributeKind.choice,
+        choiceKeys: ['harness', 'waist_belt', 'thigh'],
       ),
     ],
     EquipmentType.fins: [
@@ -418,13 +508,9 @@ abstract final class EquipmentAttributeCatalog {
         choiceKeys: ['spot', 'flood', 'adjustable'],
       ),
     ],
-    EquipmentType.camera: [
-      EquipmentAttributeDef(
-        key: 'depth_rating_m',
-        kind: AttributeKind.number,
-        dimension: AttributeDimension.depthM,
-      ),
-    ],
+    EquipmentType.camera: [_depthRating],
+    EquipmentType.housing: [_depthRating],
+    EquipmentType.strobe: [_depthRating],
     EquipmentType.dpv: [
       EquipmentAttributeDef(
         key: 'dpv_style',
@@ -443,7 +529,13 @@ abstract final class EquipmentAttributeCatalog {
       EquipmentAttributeDef(
         key: 'battery_type',
         kind: AttributeKind.choice,
-        choiceKeys: ['lithium_ion', 'nimh', 'lead_acid'],
+        choiceKeys: [
+          'lithium_ion',
+          'nimh',
+          'lead_acid',
+          'alkaline',
+          'lithium_primary',
+        ],
       ),
       // Watt-hours: the figure printed on the pack and the one airlines ask
       // about, universal in every market.
@@ -476,10 +568,12 @@ abstract final class EquipmentAttributeCatalog {
         kind: AttributeKind.choice,
         choiceKeys: ['open', 'closed'],
       ),
+      // Shown in cm or inches like a hose (issue #1804). A reel's line below
+      // stays in m / ft: 45 m of line is not read as 4500 cm.
       EquipmentAttributeDef(
         key: 'length_m',
         kind: AttributeKind.number,
-        dimension: AttributeDimension.lengthM,
+        dimension: AttributeDimension.shortLengthM,
       ),
     ],
     EquipmentType.reel: [
@@ -546,6 +640,37 @@ abstract final class EquipmentAttributeCatalog {
         key: 'sole_type',
         kind: AttributeKind.choice,
         choiceKeys: ['hard', 'soft'],
+      ),
+    ],
+    EquipmentType.o2Cell: [
+      EquipmentAttributeDef(
+        key: EquipmentAttrKeys.cellSlot,
+        kind: AttributeKind.number,
+      ),
+      EquipmentAttributeDef(
+        key: EquipmentAttrKeys.installedDate,
+        kind: AttributeKind.date,
+      ),
+    ],
+    EquipmentType.battery: [
+      EquipmentAttributeDef(
+        key: EquipmentAttrKeys.installedDate,
+        kind: AttributeKind.date,
+      ),
+      EquipmentAttributeDef(
+        key: 'battery_type',
+        kind: AttributeKind.choice,
+        choiceKeys: [
+          'lithium_ion',
+          'nimh',
+          'lead_acid',
+          'alkaline',
+          'lithium_primary',
+        ],
+      ),
+      EquipmentAttributeDef(
+        key: EquipmentAttrKeys.rechargeable,
+        kind: AttributeKind.flag,
       ),
     ],
     EquipmentType.other: [],

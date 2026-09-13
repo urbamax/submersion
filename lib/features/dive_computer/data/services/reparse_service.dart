@@ -1,9 +1,12 @@
+import 'dart:math' as math;
+
 import 'package:drift/drift.dart';
 import 'package:libdivecomputer_plugin/libdivecomputer_plugin.dart' as pigeon;
 import 'package:uuid/uuid.dart';
 
 import 'package:submersion/core/data/repositories/sync_repository.dart';
 import 'package:submersion/core/database/database.dart';
+import 'package:submersion/core/services/sync/sync_event_bus.dart';
 import 'package:submersion/features/dive_computer/data/services/libdc_dive_mode.dart';
 import 'package:submersion/features/dive_computer/domain/services/suunto_nautic_derived_events.dart';
 import 'package:submersion/features/dive_computer/domain/services/suunto_nautic_event_labels.dart';
@@ -15,9 +18,14 @@ import 'package:submersion/features/dive_log/domain/codecs/profile_sample.dart'
 import 'package:submersion/features/dive_log/domain/codecs/tank_pressure_series_codec.dart'
     show TankPressureSample;
 import 'package:submersion/features/dive_log/domain/services/bottom_time_calculator.dart';
+import 'package:submersion/features/dive_log/domain/services/source_ownership.dart';
 import 'package:submersion/features/dive_computer/data/services/parsed_tank_resolver.dart';
+import 'package:submersion/features/dive_computer/domain/entities/downloaded_dive.dart';
+import 'package:submersion/features/dive_computer/data/services/dive_parser.dart';
+import 'package:submersion/features/dive_computer/data/services/transmitter_registry_matcher.dart';
 import 'package:submersion/features/dive_log/domain/services/tank_pressure_series.dart';
 import 'package:submersion/features/dive_computer/data/services/libdc_sample_units.dart';
+import 'package:submersion/features/equipment/data/services/sensor_summary_scheduler.dart';
 
 /// Service responsible for applying re-parsed dive computer data back to the
 /// database while respecting the computer-authored vs user-authored field
@@ -35,12 +43,19 @@ class ReparseService {
   /// with the live download path.
   final bool trimTankPressureAtSurfacing;
 
+  /// The diver's transmitter registry, read per re-parsed dive so an entry
+  /// saved a moment ago applies. Null (or a failing load) means no mapping.
+  final TransmitterMatcherLoader? _transmitterMatcherLoader;
+
   ReparseService({
     required this.db,
     this.trimTankPressureAtSurfacing = true,
+    TransmitterMatcherLoader? transmitterMatcherLoader,
     ProfileSeriesRepository? profileSeries,
     TankPressureSeriesRepository? tankSeries,
-  }) : _profileSeries =
+  }) : _transmitterMatcherLoader = transmitterMatcherLoader,
+       _sync = SyncRepository(database: db),
+       _profileSeries =
            profileSeries ??
            ProfileSeriesRepository(
              database: db,
@@ -53,8 +68,19 @@ class ReparseService {
              syncRepository: SyncRepository(database: db),
            );
 
+  final SyncRepository _sync;
   final ProfileSeriesRepository _profileSeries;
   final TankPressureSeriesRepository _tankSeries;
+
+  Future<TransmitterMatcher> _loadMatcher() async {
+    final loader = _transmitterMatcherLoader;
+    if (loader == null) return const TransmitterMatcher.empty();
+    try {
+      return await loader();
+    } catch (_) {
+      return const TransmitterMatcher.empty();
+    }
+  }
 
   /// Apply a freshly parsed dive to the database, updating only
   /// computer-authored fields and preserving user-authored fields.
@@ -63,7 +89,7 @@ class ReparseService {
   /// overwriting existing blobs during the re-parse path.
   ///
   /// Returns whether the dive's profile strand was left untouched because
-  /// this source does not own it -- see [_sourceOwnsProfileStrand].
+  /// this source does not own it -- see [sourceOwnsProfileStrand].
   Future<({bool profilePreserved})> applyParsedUpdate({
     required String diveId,
     required String sourceRowId,
@@ -75,7 +101,7 @@ class ReparseService {
     Uint8List? rawData,
     Uint8List? rawFingerprint,
   }) async {
-    return db.transaction(() async {
+    final outcome = await db.transaction(() async {
       final now = DateTime.now();
 
       // A fresh download supplies its own fingerprint via [rawFingerprint];
@@ -129,7 +155,7 @@ class ReparseService {
         db.diveDataSources,
       )..where((t) => t.diveId.equals(diveId))).get();
       final isMultiSource = sourceRows.length > 1;
-      final ownsStrand = _sourceOwnsProfileStrand(sourceRow, sourceRows);
+      final ownsStrand = sourceOwnsProfileStrand(sourceRow, sourceRows);
 
       // ------------------------------------------------------------------
       // 4. Replace DiveProfiles for this source's computerId -- but only
@@ -150,7 +176,7 @@ class ReparseService {
         // dive is always multi-source: apply() backfills a primary source row
         // on the target before folding anything in, so the offset-bearing row
         // never arrives alone. A row that did arrive alone would be
-        // non-primary, which _sourceOwnsProfileStrand already refuses.
+        // non-primary, which sourceOwnsProfileStrand already refuses.
         await _replaceDiveProfiles(
           diveId: diveId,
           computerId: computerId,
@@ -174,14 +200,43 @@ class ReparseService {
       // scoping). A combined dive can carry a single source row when only
       // one original had one, so the ownership guard applies here too --
       // otherwise the merge's own surface-gap markers are deleted (#1164).
-      if (!isMultiSource && ownsStrand) {
-        await (db.delete(
-          db.diveProfileEvents,
-        )..where((t) => t.diveId.equals(diveId))).go();
-        await (db.delete(
-          db.gasSwitches,
-        )..where((t) => t.diveId.equals(diveId))).go();
-        await _tankSeries.deleteForDive(diveId);
+      final rewritesEvents = !isMultiSource && ownsStrand;
+
+      // The cylinders this parse resolves to. A re-parse reads the exact same
+      // raw bytes as the original download, so resolving to none means the
+      // parser or resolver produced less than a previous parse of those same
+      // bytes did, never a genuine "the diver's tank is gone", which the raw
+      // bytes cannot express. With no cylinder the tank/gas-switch/pressure
+      // rewrite could only delete: pressure and switches attach to a
+      // cylinder, so there would be nothing to put back. Gating the rewrite
+      // on it stops such a parse from permanently deleting tank pressure
+      // history it has nothing to replace (issue #1853).
+      //
+      // This checks the resolved cylinders, not the raw parsed fields,
+      // because the two can disagree: a gauge dive reporting a gas mix, or
+      // sample pressure with no tank record or gas mix, resolves to none.
+      final resolvedTanks = rewritesEvents
+          ? resolveParsedTanks(
+              parsed,
+              trimAtSurfacing: trimTankPressureAtSurfacing,
+            )
+          : const <DownloadedTank>[];
+      final rewritesTanks = resolvedTanks.isNotEmpty;
+
+      if (rewritesEvents) {
+        // Tombstoned: a peer's import only upserts these, so a row removed
+        // here without one would linger there beside its re-inserted copy.
+        await _deleteAndTombstone(
+          'diveProfileEvents',
+          await _idsOf(db.diveProfileEvents, diveId),
+        );
+        if (rewritesTanks) {
+          await _deleteAndTombstone(
+            'gasSwitches',
+            await _idsOf(db.gasSwitches, diveId),
+          );
+          await _tankSeries.deleteForDive(diveId);
+        }
 
         // Re-insert events from parsed data
         await _insertEvents(
@@ -197,13 +252,14 @@ class ReparseService {
       // ------------------------------------------------------------------
       // 6. DiveTanks carry-over (primary + single-source only)
       //    Skip for non-primary or multi-source dives to avoid overwriting
-      //    tank data owned by other sources.
+      //    tank data owned by other sources, and for a parse resolving to
+      //    no cylinder at all (see [resolvedTanks] above).
       // ------------------------------------------------------------------
-      if (sourceRow.isPrimary && !isMultiSource) {
+      if (rewritesTanks) {
         final tankIdsByIndex = await _carryOverTanks(
           diveId: diveId,
           computerId: computerId,
-          parsed: parsed,
+          resolvedTanks: resolvedTanks,
         );
         await _replaceTankPressureProfiles(
           diveId: diveId,
@@ -219,46 +275,80 @@ class ReparseService {
         );
       }
 
+      // ------------------------------------------------------------------
+      // 7. Stage what this re-parse wrote. Each rewritten child is staged
+      //    itself and travels without the dive
+      //    (SyncDataSerializer.parentGatedChildEntities). The dive row is
+      //    staged only when it changed (the primary path): re-stamping an
+      //    unchanged dive would let this device's copy win over a newer edit
+      //    to it made on another device.
+      // ------------------------------------------------------------------
+      final stagedAt = now.millisecondsSinceEpoch;
+      Future<void> stage(String entityType, Iterable<String> ids) async {
+        for (final id in ids) {
+          await _sync.markRecordPending(
+            entityType: entityType,
+            recordId: id,
+            localUpdatedAt: stagedAt,
+          );
+        }
+      }
+
+      await stage('diveDataSources', [sourceRowId]);
+      if (rewritesEvents) {
+        await stage(
+          'diveProfileEvents',
+          await _idsOf(db.diveProfileEvents, diveId),
+        );
+      }
+      if (rewritesTanks) {
+        await stage('diveTanks', await _idsOf(db.diveTanks, diveId));
+        // gasSwitches is only touched (deleted + re-inserted) alongside
+        // tanks; see the guard above.
+        await stage('gasSwitches', await _idsOf(db.gasSwitches, diveId));
+      }
+      if (sourceRow.isPrimary) await stage('dives', [diveId]);
+
       return (profilePreserved: !ownsStrand);
     });
+    // After commit, so an auto-sync publishes it. A non-primary re-parse
+    // writes no series, whose repositories otherwise announce the change.
+    SyncEventBus.notifyLocalChange();
+    return outcome;
   }
 
-  /// Whether [row] is the sole author of its `(dive_id, computer_id)` profile
-  /// strand, with that strand still in [row]'s own parse frame.
-  ///
-  /// Re-parsing deletes the strand and re-inserts the parsed samples at their
-  /// own `timeSeconds`, so it is only safe when both hold. A sequential
-  /// combine breaks both: [DiveMergeService.apply] re-bases each segment onto
-  /// the merged timeline and carries every original's source row over demoted
-  /// to non-primary, so re-parsing one of them would drop half a dive back at
-  /// the original download's timestamps and delete the synthesized
-  /// surface-gap samples along the way (#1164).
-  ///
-  /// Two signals, either of which disqualifies the row:
-  ///
-  /// - **No row on the dive is primary.** That is exactly a combined dive:
-  ///   the merge demotes all carried rows and the merged dive has no source
-  ///   row of its own. [DiveConsolidationService] demotes only its
-  ///   secondaries, so a consolidated dive keeps a primary row and its
-  ///   per-computer strands stay re-parseable.
-  /// - **A re-parseable sibling row shares this row's `computerId`** (null
-  ///   counts as equal to null). The strand has more than one author, so
-  ///   whichever source re-parses last would wipe out what the others wrote
-  ///   -- true of same-computer halves regardless of the primary flag. Only
-  ///   siblings carrying raw data count: deleting a computer nulls its
-  ///   sources' `computerId` (FK `setNull`) and
-  ///   `_backfillProvenanceSnapshots` adds rows with no `computerId` at all,
-  ///   so sharing a null strand with a row that can never be re-parsed is an
-  ///   ordinary shape, not contention.
-  bool _sourceOwnsProfileStrand(
-    DiveDataSourcesData row,
-    List<DiveDataSourcesData> allRowsForDive,
-  ) {
-    if (!allRowsForDive.any((r) => r.isPrimary)) return false;
-    return !allRowsForDive.any(
-      (r) =>
-          r.id != row.id && r.computerId == row.computerId && r.rawData != null,
-    );
+  /// The ids of [table]'s rows on [diveId].
+  Future<List<String>> _idsOf(TableInfo<Table, dynamic> table, String diveId) {
+    return db
+        .customSelect(
+          'SELECT id FROM ${table.actualTableName} WHERE dive_id = ?',
+          variables: [Variable<String>(diveId)],
+          readsFrom: {table},
+        )
+        .map((row) => row.read<String>('id'))
+        .get();
+  }
+
+  /// Deletes the [entityType] rows [ids] and logs a tombstone for each.
+  Future<void> _deleteAndTombstone(String entityType, List<String> ids) async {
+    if (ids.isEmpty) return;
+    final table = switch (entityType) {
+      'diveProfileEvents' => 'dive_profile_events',
+      'gasSwitches' => 'gas_switches',
+      _ => throw ArgumentError.value(entityType, 'entityType'),
+    };
+    // In chunks: a long dive's events can outnumber SQLite's ~999
+    // variables in one statement.
+    for (var i = 0; i < ids.length; i += 900) {
+      final chunk = ids.sublist(i, math.min(i + 900, ids.length));
+      await db.customStatement(
+        'DELETE FROM $table WHERE id IN (${List.filled(chunk.length, '?').join(', ')})',
+        chunk,
+      );
+    }
+    for (final id in ids) {
+      await _sync.logDeletion(entityType: entityType, recordId: id);
+    }
   }
 
   /// Count how many sources for a given computer have raw data vs not.
@@ -394,7 +484,7 @@ class ReparseService {
   ///
   /// Returns the error messages (empty on full success) alongside the number
   /// of sources whose profile strand was deliberately left alone -- see
-  /// [_sourceOwnsProfileStrand]. Callers surface that count so a re-parse on
+  /// [sourceOwnsProfileStrand]. Callers surface that count so a re-parse on
   /// a combined dive does not look like an unexplained no-op (#1164).
   Future<({List<String> errors, int profilesPreserved})> reparseDive(
     String diveId, {
@@ -456,6 +546,9 @@ class ReparseService {
       );
     }
 
+    // The re-parse rewrote the profile strands; the sensor summary is
+    // derived from them (condition phase 2).
+    if (sources.isNotEmpty) scheduleSensorSummaryRefresh([diveId]);
     return (errors: errors, profilesPreserved: profilesPreserved);
   }
 
@@ -836,12 +929,13 @@ class ReparseService {
     });
   }
 
-  /// Re-creates/updates dive_tanks from parsed data and returns a map of
-  /// tank index -> tank row id, used to attach tank pressure profiles.
+  /// Re-creates/updates dive_tanks from the parse's [resolvedTanks] and
+  /// returns a map of tank index -> tank row id, used to attach tank pressure
+  /// profiles.
   Future<Map<int, String>> _carryOverTanks({
     required String diveId,
     required String? computerId,
-    required pigeon.ParsedDive parsed,
+    required List<DownloadedTank> resolvedTanks,
   }) async {
     final tankIdsByIndex = <int, String>{};
     // Get existing tanks
@@ -852,22 +946,40 @@ class ReparseService {
             .get();
 
     // Build a map of existing tanks by tankOrder
-    final existingByOrder = {for (final t in existingTanks) t.tankOrder: t};
+    final matcher = await _loadMatcher();
+    final parsedTanks = applyTransmitterRegistry(
+      resolvedTanks.map(DiveParser.tankDataFrom).toList(),
+      matcher,
+      computerId: computerId,
+    );
 
-    // Build a set of new tank orders from parsed
+    // Which existing row takes parsed tank [index]. A row's source index wins
+    // (a reassignment, issue #1314); rows from before v200 carry null and
+    // fall back to their order, as the old path did. The fallback accepts
+    // rows attributed to this computer or to none (legacy and manual rows),
+    // never another computer's row on a multi-source dive. A row marked
+    // kNoSourceTankIndex takes nothing.
+    final matchedIds = <String>{};
+    DiveTank? existingFor(int index) {
+      for (final t in existingTanks) {
+        if (matchedIds.contains(t.id)) continue;
+        if (t.computerId != computerId) continue;
+        if (t.sourceTankIndex == index) return t;
+      }
+      for (final t in existingTanks) {
+        if (matchedIds.contains(t.id)) continue;
+        if (t.computerId != null && t.computerId != computerId) continue;
+        if (t.sourceTankIndex == null && t.tankOrder == index) return t;
+      }
+      return null;
+    }
+
     final newTankOrders = <int>{};
-
-    // Gas-mix linking and tankless synthesis (computers that report gas
-    // mixes but no tank records) live in the shared resolver so this path
-    // cannot drift from the live-download mapper.
-    for (final tank in resolveParsedTanks(
-      parsed,
-      trimAtSurfacing: trimTankPressureAtSurfacing,
-    )) {
+    for (final tank in parsedTanks) {
       newTankOrders.add(tank.index);
-
-      final existing = existingByOrder[tank.index];
+      final existing = existingFor(tank.index);
       if (existing != null) {
+        matchedIds.add(existing.id);
         tankIdsByIndex[tank.index] = existing.id;
         // Update existing tank: overwrite computer fields, preserve user fields
         await (db.update(
@@ -891,12 +1003,18 @@ class ReparseService {
             // before the serial was stored gains it (and a parse that stops
             // reporting one clears the stale value).
             transmitterSerial: Value(tank.transmitterSerial),
+            // A legacy row gains its explicit source index here; a row that
+            // already has one keeps it.
+            sourceTankIndex: existing.sourceTankIndex == null
+                ? Value(tank.index)
+                : const Value.absent(),
             // tankName, presetName, equipmentId, tankRole, tankMaterial
-            // are user-authored -- NOT touched
+            // are user-authored -- NOT touched, so the registry is not
+            // applied to an existing row either.
           ),
         );
       } else {
-        // New tank: insert with defaults
+        // New tank: insert with defaults, registry applied.
         final newTankId = _uuid.v4();
         tankIdsByIndex[tank.index] = newTankId;
         await db
@@ -907,6 +1025,11 @@ class ReparseService {
                 diveId: Value(diveId),
                 computerId: Value(computerId),
                 volume: Value(tank.volumeLiters),
+                workingPressure: Value.absentIfNull(tank.workingPressure),
+                tankMaterial: Value.absentIfNull(tank.material),
+                presetName: Value.absentIfNull(tank.presetName),
+                equipmentId: Value.absentIfNull(tank.equipmentId),
+                tankName: Value.absentIfNull(tank.tankName),
                 startPressure: Value(tank.startPressure),
                 endPressure: Value(tank.endPressure),
                 o2Percent: Value(tank.o2Percent),
@@ -914,17 +1037,22 @@ class ReparseService {
                 tankOrder: Value(tank.index),
                 tankRole: Value(tank.role ?? 'backGas'),
                 transmitterSerial: Value(tank.transmitterSerial),
+                sourceTankIndex: Value(tank.index),
               ),
             );
       }
     }
 
-    // Delete tanks that exist in DB but not in parsed
+    // Delete tanks that exist in DB but were neither matched nor kept by
+    // order (the pre-v200 rule, so manual rows on a re-parsed dive behave as
+    // before).
     for (final existing in existingTanks) {
+      if (matchedIds.contains(existing.id)) continue;
       if (!newTankOrders.contains(existing.tankOrder)) {
         await (db.delete(
           db.diveTanks,
         )..where((t) => t.id.equals(existing.id))).go();
+        await _sync.logDeletion(entityType: 'diveTanks', recordId: existing.id);
       }
     }
 
@@ -1016,13 +1144,14 @@ class ReparseService {
   /// Calculate bottom time from profile samples.
   ///
   /// Delegates to [BottomTimeCalculator], mirroring
-  /// DiveComputerRepositoryImpl._calculateBottomTimeFromPoints: bottom time
+  /// DiveComputerRepository._calculateBottomTimeFromPoints: bottom time
   /// runs from surface departure to the start of the final ascent, so
-  /// multilevel dives count their shallower segments. Returns null if
-  /// insufficient data.
+  /// multilevel dives count their shallower segments, and never exceeds
+  /// [totalDurationSeconds], the computer's own reported runtime. Returns
+  /// null if insufficient data.
   static int? _calculateBottomTimeFromSamples(
     List<pigeon.ProfileSample> samples, {
-    int? totalDurationSeconds,
+    required int totalDurationSeconds,
   }) {
     return BottomTimeCalculator.secondsFromSamples([
       for (final s in samples) (timestamp: s.timeSeconds, depth: s.depthMeters),

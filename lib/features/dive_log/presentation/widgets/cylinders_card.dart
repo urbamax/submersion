@@ -1,19 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:submersion/core/constants/tank_presets.dart';
 import 'package:submersion/core/constants/gas_consumption_display.dart';
 import 'package:submersion/core/icons/mdi_icons.dart';
 import 'package:submersion/core/providers/async_value_extensions.dart';
+import 'package:submersion/core/utils/number_display.dart';
 import 'package:submersion/core/utils/unit_formatter.dart';
 import 'package:submersion/features/dive_log/domain/entities/cylinder_sac.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive_data_source.dart';
 import 'package:submersion/features/dive_log/domain/services/source_name_resolver.dart';
+import 'package:submersion/features/dive_log/domain/services/transmitter_serial.dart';
 import 'package:submersion/features/dive_log/presentation/providers/dive_providers.dart';
 import 'package:submersion/features/dive_log/presentation/providers/gas_analysis_providers.dart';
 import 'package:submersion/features/dive_log/presentation/widgets/field_attribution_badge.dart';
+import 'package:submersion/features/dive_log/presentation/widgets/tank_series_reassign_sheet.dart';
+import 'package:submersion/features/equipment/presentation/providers/equipment_providers.dart';
+import 'package:submersion/features/equipment/presentation/widgets/observation_status_chip.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
+import 'package:submersion/features/transmitters/domain/entities/transmitter.dart';
+import 'package:submersion/features/transmitters/presentation/providers/transmitter_providers.dart';
 import 'package:submersion/l10n/arb/app_localizations.dart';
 import 'package:submersion/l10n/l10n_extension.dart';
 
@@ -23,7 +31,7 @@ import 'package:submersion/l10n/l10n_extension.dart';
 /// Replaces the former Tanks card and SAC by Cylinder block. Occupies the
 /// [DiveDetailSectionId.tanks] slot on the dive detail page. Per-tank SAC
 /// is shown whenever it is computable, regardless of tank count; the
-/// trailing block is omitted entirely when it is not.
+/// consumption row is omitted entirely when it is not.
 class CylindersCard extends ConsumerWidget {
   const CylindersCard({
     super.key,
@@ -52,6 +60,13 @@ class CylindersCard extends ConsumerWidget {
     // a single-source dive never needs attribution.
     final showSourceBadges = dataSources.length >= 2;
     final computerNames = _computerDisplayNames(context, dataSources);
+    // Serials with a registry entry get a plain caption; the rest get an
+    // Assign chip (issue #1365). Read through `.value`, which keeps the
+    // previous list while a diver change reloads the provider; `valueOrNull`
+    // would drop to an empty registry and flash the chip for every tank.
+    final knownSerials = Transmitter.knownSerials(
+      ref.watch(transmittersProvider).value ?? const <Transmitter>[],
+    );
 
     return Card(
       child: Padding(
@@ -74,12 +89,42 @@ class CylindersCard extends ConsumerWidget {
                 sourceName: showSourceBadges && entry.value.computerId != null
                     ? computerNames[entry.value.computerId]
                     : null,
+                knownSerials: knownSerials,
               ),
             ),
+            if (_canReassign(dive, tankPressures))
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: TextButton.icon(
+                  icon: const Icon(Icons.swap_vert),
+                  label: Text(context.l10n.diveLog_tank_reassignSeries),
+                  onPressed: () => showTankSeriesReassignSheet(
+                    context,
+                    ref,
+                    dive: dive,
+                    tankPressures: tankPressures ?? const {},
+                  ),
+                ),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  /// Two or more of this dive's tanks carry a series from one computer
+  /// (issue #1314): only then is there anything to move.
+  static bool _canReassign(
+    Dive dive,
+    Map<String, List<TankPressurePoint>>? tankPressures,
+  ) {
+    if (tankPressures == null) return false;
+    final byComputer = <String?, int>{};
+    for (final tank in dive.tanks) {
+      if ((tankPressures[tank.id] ?? const []).isEmpty) continue;
+      byComputer[tank.computerId] = (byComputer[tank.computerId] ?? 0) + 1;
+    }
+    return byComputer.values.any((n) => n >= 2);
   }
 
   Widget _tankRow(
@@ -89,8 +134,11 @@ class CylindersCard extends ConsumerWidget {
     required CylinderSac? cylinderSac,
     required Map<String, List<TankPressurePoint>>? tankPressures,
     required String? sourceName,
+    required Set<String> knownSerials,
   }) {
     final theme = Theme.of(context);
+    final serial = normalizeTransmitterSerial(tank.transmitterSerial);
+    final serialKnown = serial != null && knownSerials.contains(serial);
 
     final pressures = _resolveTankPressures(
       tank: tank,
@@ -102,16 +150,14 @@ class CylindersCard extends ConsumerWidget {
         ? pressures.$1! - pressures.$2!
         : null;
     // The pressure drop and the gas volume are one fact in two units, so
-    // they read together. It also keeps the trailing slot to the rates:
-    // ListTile caps leading and trailing at 56px minus the density
-    // adjustment, which is 48px on desktop, and three lines do not fit.
+    // they read together on one line.
     final gasUsedLiters = cylinderSac?.gasUsedLiters;
     final volumeUsed = gasUsedLiters != null
         ? ' / ${units.convertVolume(gasUsedLiters).round()} '
               '${units.volumeSymbol}'
         : '';
     final used = pressureUsed != null && pressureUsed > 0
-        ? ' (${units.formatPressure(pressureUsed)}$volumeUsed used)'
+        ? ' ${context.l10n.diveLog_tank_gasUsed('${units.formatPressure(pressureUsed)}$volumeUsed')}'
         : '';
 
     // Preset display name, falling back to formatted volume.
@@ -131,7 +177,11 @@ class CylindersCard extends ConsumerWidget {
         ? tank.name!
         : context.l10n.diveLog_tank_title(index + 1);
 
-    final modDepth = units.formatDepth(tank.gasMix.mod(), decimals: 0);
+    final workingPpO2 = settings.ppO2MaxWorking;
+    final modDepth = units.formatDepth(
+      tank.gasMix.mod(ppO2: workingPpO2),
+      decimals: 0,
+    );
     final mndValue = tank.gasMix.mnd(
       endLimit: settings.endLimit,
       o2Narcotic: settings.o2Narcotic,
@@ -139,15 +189,30 @@ class CylindersCard extends ConsumerWidget {
     final mndDepth = mndValue.isFinite
         ? units.formatDepth(mndValue, decimals: 0)
         : '--';
-    final modMndText = context.l10n.diveLog_tank_modMndInfo(modDepth, mndDepth);
+    final modMndText = context.l10n.diveLog_tank_modMndInfo(
+      modDepth,
+      formatFixedForDisplay(workingPpO2, 1),
+      mndDepth,
+    );
+    final consumptionRow = _consumptionRow(
+      context.l10n,
+      theme,
+      cylinderSac,
+      sourceName,
+    );
 
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: const Icon(MdiIcons.divingScubaTank),
-      title: Row(
-        mainAxisSize: MainAxisSize.min,
+      // The trailing rates take their width first, so on a narrow card
+      // (a phone, or half of a paired row) the chip drops under the name
+      // rather than overflowing beside it.
+      title: Wrap(
+        spacing: 6,
+        runSpacing: 2,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Flexible(child: Text('$tankTitle (${tank.gasMix.name})')),
+          Text('$tankTitle (${tank.gasMix.name})'),
           if (tankLabel != null) _volumeChip(theme, tankLabel),
         ],
       ),
@@ -158,22 +223,67 @@ class CylindersCard extends ConsumerWidget {
             '$startP ${units.pressureSymbol} → '
             '$endP ${units.pressureSymbol}$used',
           ),
+          ?consumptionRow,
           Text(
             modMndText,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.tertiary,
             ),
           ),
+          if (serial != null)
+            Row(
+              children: [
+                Text(
+                  context.l10n.transmitters_serial(serial),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                if (!serialKnown) ...[
+                  const SizedBox(width: 8),
+                  ActionChip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(context.l10n.diveLog_tank_assignTransmitter),
+                    onPressed: () => context.push(
+                      Uri(
+                        path: '/transmitters/new',
+                        queryParameters: {'serial': serial},
+                      ).toString(),
+                    ),
+                  ),
+                ],
+              ],
+            ),
         ],
       ),
-      trailing: _trailingBlock(context.l10n, theme, cylinderSac, sourceName),
+      // Either extra subtitle row makes the tile tall, and M3 centres the
+      // leading icon on a tall two-line tile, away from the name.
+      isThreeLine: serial != null || consumptionRow != null,
+      trailing: _checkInButton(tank),
+    );
+  }
+
+  /// A cylinder that is a gear item (the registry wrote its equipment link)
+  /// gets the check-in button; any other cylinder has no trailing widget.
+  /// Trailing holds only this fixed-width icon button: ListTile lays trailing
+  /// out first and gives the title what is left, so anything carrying text
+  /// there starves the tank name on a narrow card (#935). The item loads
+  /// through its own provider so the row never blocks on it.
+  Widget? _checkInButton(DiveTank tank) {
+    final equipmentId = tank.equipmentId;
+    if (equipmentId == null) return null;
+    return Consumer(
+      builder: (context, ref, _) {
+        final item = ref.watch(equipmentItemProvider(equipmentId)).value;
+        if (item == null) return const SizedBox.shrink();
+        return ObservationStatusChip(equipment: item, dive: dive);
+      },
     );
   }
 
   /// Small outlined chip carrying the preset/volume label (e.g. "AL80").
   Widget _volumeChip(ThemeData theme, String label) {
     return Container(
-      margin: const EdgeInsetsDirectional.only(start: 6),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(
         border: Border.all(color: theme.colorScheme.outlineVariant),
@@ -188,36 +298,32 @@ class CylindersCard extends ConsumerWidget {
     );
   }
 
-  /// Trailing column: attribution badge and one consumption line per
-  /// visible lane. Returns null when there is nothing to show so the tile
-  /// keeps its natural width. The gas used lives in the subtitle, beside
-  /// the pressure drop it restates: ListTile caps this slot at two lines on
-  /// desktop, and Both already needs both of them.
-  Widget? _trailingBlock(
+  /// Subtitle row under the pressure line: attribution badge and one
+  /// consumption item per visible lane, wrapping onto a second line when the
+  /// card is too narrow for them side by side. Returns null when there is
+  /// nothing to show.
+  Widget? _consumptionRow(
     AppLocalizations l10n,
     ThemeData theme,
     CylinderSac? cylinderSac,
     String? sourceName,
   ) {
-    final hasSac = cylinderSac != null && cylinderSac.hasValidSac;
-    if (!hasSac && sourceName == null) return null;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        if (sourceName != null) FieldAttributionBadge(sourceName: sourceName),
-        if (hasSac) ...[
-          for (final line in _consumptionLines(l10n, cylinderSac))
-            Text(
-              line,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: theme.colorScheme.primary,
-              ),
-            ),
-        ],
-      ],
+    final style = theme.textTheme.bodyMedium?.copyWith(
+      fontWeight: FontWeight.bold,
+      color: theme.colorScheme.primary,
+    );
+    final children = [
+      if (sourceName != null) FieldAttributionBadge(sourceName: sourceName),
+      if (cylinderSac != null && cylinderSac.hasValidSac)
+        for (final line in _consumptionLines(l10n, cylinderSac))
+          Text(line, style: style),
+    ];
+    if (children.isEmpty) return null;
+    return Wrap(
+      spacing: 12,
+      runSpacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: children,
     );
   }
 

@@ -71,6 +71,7 @@ class _QualityFindingCardState extends State<QualityFindingCard> {
                 '${suggestedOffset.inHours} h',
               ),
       ConsolidateDuplicateRepair() => l10n.dataQuality_repairLabel_consolidate,
+      DeleteDuplicateRepair() => l10n.dataQuality_repairLabel_deleteDuplicate,
       CombineSplitRepair() => l10n.dataQuality_repairLabel_combine,
       SetPrimarySourceRepair() => l10n.dataQuality_repairLabel_setPrimary,
       SplitSourceRepair() => l10n.dataQuality_repairLabel_split,
@@ -91,6 +92,8 @@ class _QualityFindingCardState extends State<QualityFindingCard> {
         l10n.dataQuality_repairLabel_reassignSeries,
       CompareSourcesRepair() => l10n.dataQuality_repairLabel_compare,
       GoToDiveRepair() => l10n.dataQuality_action_goToDive,
+      AssignTransmitterRepair() =>
+        l10n.dataQuality_repairLabel_assignTransmitter,
     };
   }
 

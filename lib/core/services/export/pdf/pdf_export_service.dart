@@ -6,6 +6,8 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import 'package:submersion/core/services/export/shared/file_export_utils.dart';
+import 'package:submersion/features/equipment/domain/models/equipment_arrangement.dart';
+import 'package:submersion/features/settings/data/repositories/app_settings_repository.dart';
 import 'package:submersion/core/services/pdf_templates/pdf_date_formatter.dart';
 import 'package:submersion/features/certifications/domain/entities/certification.dart';
 import 'package:submersion/features/divers/domain/entities/diver.dart';
@@ -15,8 +17,8 @@ import 'package:submersion/core/services/pdf_templates/pdf_profile_series.dart';
 import 'package:submersion/core/services/pdf_templates/pdf_template_factory.dart';
 import 'package:submersion/core/utils/unit_formatter.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart';
+import 'package:submersion/features/dive_types/domain/entities/dive_type_entity.dart';
 import 'package:submersion/features/signatures/data/services/signature_storage_service.dart';
-import 'package:submersion/features/signatures/domain/entities/signature.dart';
 import 'package:submersion/features/trips/domain/entities/trip.dart';
 
 /// Handles PDF export for dive logbooks and trip reports.
@@ -168,22 +170,30 @@ class PdfExportService {
     List<Certification>? certifications,
     Diver? diver,
     Uint8List? diverPhoto,
+    Map<String, DiveTypeEntity> diveTypesById = const {},
   }) async {
-    final signatureService = SignatureStorageService();
-    final diveSignatures = <String, List<Signature>>{};
-
-    for (final dive in dives) {
-      final sigs = await signatureService.getAllSignaturesForDive(dive.id);
-      if (sigs.isNotEmpty) {
-        diveSignatures[dive.id] = sigs;
-      }
-    }
+    final diveSignatures = await SignatureStorageService()
+        .getSignaturesForDives([for (final dive in dives) dive.id]);
 
     // The legacy builder never did this, so accented site names were dropped.
     await PdfFonts.instance.initialize();
 
+    // The printed logbook follows the diver's gear arrangement (#1486,
+    // #1576). Read here rather than threaded through every caller, matching
+    // how this method already reaches for SignatureStorageService. A read
+    // that fails throws; the export still prints, in the default order.
+    EquipmentArrangement gearArrangement;
+    try {
+      gearArrangement =
+          await AppSettingsRepository().getEquipmentArrangement() ??
+          EquipmentArrangement.defaults;
+    } catch (_) {
+      gearArrangement = EquipmentArrangement.defaults;
+    }
+
     final builder = PdfTemplateFactory().getBuilder(options.template);
     final pdfBytes = await builder.buildPdf(
+      gearArrangement: gearArrangement,
       dives: dives,
       pageSize: options.pageSize,
       dates: dates,
@@ -197,6 +207,7 @@ class PdfExportService {
       diver: diver,
       diverPhoto: diverPhoto,
       includeVerificationAreas: options.includeVerificationAreas,
+      diveTypesById: diveTypesById,
     );
 
     final fileName =
@@ -216,6 +227,7 @@ class PdfExportService {
     List<Certification>? certifications,
     Diver? diver,
     Uint8List? diverPhoto,
+    Map<String, DiveTypeEntity> diveTypesById = const {},
   }) async {
     final result = await generateDivePdfBytes(
       dives,
@@ -227,6 +239,7 @@ class PdfExportService {
       certifications: certifications,
       diver: diver,
       diverPhoto: diverPhoto,
+      diveTypesById: diveTypesById,
     );
     return saveAndShareFileBytes(
       result.bytes,
@@ -246,6 +259,7 @@ class PdfExportService {
     List<Certification>? certifications,
     Diver? diver,
     Uint8List? diverPhoto,
+    Map<String, DiveTypeEntity> diveTypesById = const {},
   }) async {
     final result = await generateDivePdfBytes(
       dives,
@@ -257,6 +271,7 @@ class PdfExportService {
       certifications: certifications,
       diver: diver,
       diverPhoto: diverPhoto,
+      diveTypesById: diveTypesById,
     );
     return savePdfBytesToFile(result.bytes, result.fileName);
   }

@@ -36,6 +36,10 @@ import 'package:submersion/features/dive_sites/presentation/widgets/site_locatio
 import 'package:submersion/shared/widgets/debounced_search_results.dart';
 import 'package:submersion/shared/widgets/feature_accent.dart';
 import 'package:submersion/features/dive_sites/presentation/site_difficulty_display.dart';
+import 'package:submersion/features/site_types/presentation/providers/site_type_providers.dart';
+import 'package:submersion/features/site_types/presentation/site_type_display.dart';
+import 'package:submersion/features/tags/domain/entities/tag.dart';
+import 'package:submersion/features/tags/presentation/providers/tag_providers.dart';
 
 /// Content widget for the site list, used in master-detail layout.
 class SiteListContent extends ConsumerStatefulWidget {
@@ -248,14 +252,15 @@ class _SiteListContentState extends ConsumerState<SiteListContent> {
     _handleItemTap(sites[index].site);
   }
 
-  Future<void> _startMerge() async {
+  Future<BulkActionOutcome> _startMerge() async {
     final selectedCount = _selectedIds.length;
     final result = await context.push<SiteMergeResult>(
       '/sites/merge',
       extra: _selectedIds.toList(),
     );
 
-    if (!mounted || result == null) return;
+    if (result == null) return BulkActionOutcome.cancelled;
+    if (!mounted) return BulkActionOutcome.completed;
 
     _mergeSnapshot = result.snapshot;
     final mergedId = result.survivorId;
@@ -300,9 +305,10 @@ class _SiteListContentState extends ConsumerState<SiteListContent> {
         ),
       );
     }
+    return BulkActionOutcome.completed;
   }
 
-  Future<void> _confirmAndDelete() async {
+  Future<BulkActionOutcome> _confirmAndDelete() async {
     final count = _selectedIds.length;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -371,7 +377,9 @@ class _SiteListContentState extends ConsumerState<SiteListContent> {
           ),
         );
       }
+      return BulkActionOutcome.completed;
     }
+    return BulkActionOutcome.cancelled;
   }
 
   void _showSortSheet(BuildContext context) {
@@ -1145,6 +1153,29 @@ class _SiteListContentState extends ConsumerState<SiteListContent> {
                 context.l10n.diveSites_list_activeFilter_hasDives,
                 () => ref.read(siteFilterProvider.notifier).state = filter
                     .copyWith(clearHasDives: true),
+              ),
+            // One chip per filtered site type and tag (issue #1765).
+            for (final typeId in filter.siteTypeIds)
+              _buildFilterChip(
+                ref
+                        .watch(siteTypesByIdProvider)
+                        .value?[typeId]
+                        ?.localizedName(context.l10n) ??
+                    typeId,
+                () => ref.read(siteFilterProvider.notifier).state = filter
+                    .copyWith(
+                      siteTypeIds: {...filter.siteTypeIds}..remove(typeId),
+                    ),
+              ),
+            for (final tagId in filter.tagIds)
+              _buildFilterChip(
+                (ref.watch(tagsProvider).value ?? const <Tag>[])
+                        .where((t) => t.id == tagId)
+                        .firstOrNull
+                        ?.name ??
+                    tagId,
+                () => ref.read(siteFilterProvider.notifier).state = filter
+                    .copyWith(tagIds: {...filter.tagIds}..remove(tagId)),
               ),
           ],
         ),

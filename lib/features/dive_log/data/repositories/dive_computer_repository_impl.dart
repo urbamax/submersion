@@ -20,9 +20,11 @@ import 'package:submersion/core/matching/match_scorer.dart';
 import 'package:submersion/core/utils/deco_dive_detector.dart';
 import 'package:submersion/core/utils/stream_debounce.dart';
 import 'package:submersion/features/dive_computer/data/services/libdc_sample_units.dart';
+import 'package:submersion/features/dive_import/data/services/imported_file_reclaimer.dart';
 import 'package:submersion/features/dive_log/data/repositories/dive_repository_impl.dart';
 import 'package:submersion/features/dive_log/data/repositories/profile_series_repository.dart';
 import 'package:submersion/features/dive_log/data/repositories/safety_findings_repository.dart';
+import 'package:submersion/features/dive_log/data/repositories/series_id_chunks.dart';
 import 'package:submersion/features/dive_log/data/repositories/tank_pressure_series_repository.dart';
 import 'package:submersion/features/dive_sites/domain/entities/dive_site.dart'
     show GeoPoint;
@@ -47,8 +49,12 @@ import 'package:submersion/features/dive_log/domain/entities/dive_computer.dart'
 
 /// Repository for managing dive computers and multi-profile support.
 class DiveComputerRepository {
-  DiveComputerRepository({DiveAltitudeEnricher? altitudeEnricher})
-    : _altitudeEnricher = altitudeEnricher ?? DiveAltitudeEnricher();
+  DiveComputerRepository({
+    DiveAltitudeEnricher? altitudeEnricher,
+    ImportedFileReclaimer? importedFileReclaimer,
+  }) : _altitudeEnricher = altitudeEnricher ?? DiveAltitudeEnricher(),
+       _importedFileReclaimer =
+           importedFileReclaimer ?? ImportedFileReclaimer();
 
   AppDatabase get _db => DatabaseService.instance.database;
   final SyncRepository _syncRepository = SyncRepository();
@@ -69,6 +75,11 @@ class DiveComputerRepository {
   Stream<void> watchComputersChanges() => _db
       .tableUpdates(TableUpdateQuery.onTable(_db.diveComputers))
       .debounce(DiveRepository.changeTickDebounce);
+
+  /// The same refcounted sweep the dive-deletion cascade uses (issue #478):
+  /// the row this repository deletes on the replaceSource path may be the
+  /// last one naming a stored import file.
+  final ImportedFileReclaimer _importedFileReclaimer;
 
   /// Held for the repository's lifetime so a multi-dive download shares one
   /// elevation-lookup cache: a trip's worth of dives at the same site costs a
@@ -1082,6 +1093,11 @@ class DiveComputerRepository {
         [diveId, computerId],
       );
     });
+    // A row deleted above can have been the last reference to a stored import
+    // file (issue #478). Swept after the transaction commits, so a failure
+    // leaks a row rather than stranding a surviving source row on bytes that
+    // are gone.
+    await _importedFileReclaimer.reclaimOrphans();
   }
 
   /// Import a profile and associate it with a dive (creating one if needed).
@@ -1168,7 +1184,9 @@ class DiveComputerRepository {
                 : null);
 
         // durationSeconds from the dive computer is total runtime,
-        // not bottom time. Calculate bottom time from the profile.
+        // not bottom time. Calculate bottom time from the profile, bounded
+        // by that runtime so a sample stream that outlasts the dive cannot
+        // produce a bottom time longer than the dive (issue #1642).
         final bottomTimeSeconds = _calculateBottomTimeFromPoints(
           points,
           totalDurationSeconds: durationSeconds,
@@ -1440,6 +1458,11 @@ class DiveComputerRepository {
                 tankOrder: Value(tank.index),
                 tankRole: Value(tank.role ?? 'backGas'),
                 transmitterSerial: Value(tank.transmitterSerial),
+                equipmentId: Value.absentIfNull(tank.equipmentId),
+                tankName: Value.absentIfNull(tank.tankName),
+                // The parsed index this row's computer data comes from
+                // (issue #1314); re-parse keys on it.
+                sourceTankIndex: Value(tank.index),
               ),
             );
             _log.info(
@@ -1938,6 +1961,41 @@ class DiveComputerRepository {
     }
   }
 
+  /// [getEventsForDive] for many dives at once, keyed by dive id; a dive
+  /// without events is absent.
+  ///
+  /// One statement per [kSeriesIdChunkSize] ids instead of one per dive, so
+  /// the full UDDF export costs the same for any logbook size (issue #1867).
+  /// `dive_profile_events` has no `dive_id` index, which made every
+  /// per-dive read a scan of the whole table. Each dive keeps the per-dive
+  /// read's timestamp order.
+  Future<Map<String, List<DiveProfileEvent>>> getEventsForDives(
+    List<String> diveIds,
+  ) async {
+    if (diveIds.isEmpty) return {};
+    try {
+      final byDive = <String, List<DiveProfileEvent>>{};
+      for (final chunk in seriesIdChunks(diveIds)) {
+        final rows =
+            await (_db.select(_db.diveProfileEvents)
+                  ..where((t) => t.diveId.isIn(chunk))
+                  ..orderBy([(t) => OrderingTerm.asc(t.timestamp)]))
+                .get();
+        for (final row in rows) {
+          byDive.putIfAbsent(row.diveId, () => []).add(row);
+        }
+      }
+      return byDive;
+    } catch (e, stackTrace) {
+      _log.error(
+        'Failed to get events for ${diveIds.length} dives',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
   /// Add an event to a dive profile
   Future<void> addProfileEvent({
     required String diveId,
@@ -2092,12 +2150,13 @@ class DiveComputerRepository {
   ///
   /// Delegates to [BottomTimeCalculator]: bottom time runs from surface
   /// departure to the start of the final ascent, so multilevel dives
-  /// count their shallower segments.
+  /// count their shallower segments. The result never exceeds
+  /// [totalDurationSeconds], the computer's own reported runtime.
   ///
   /// Returns null if profile data is insufficient for calculation.
   int? _calculateBottomTimeFromPoints(
     List<ProfilePointData> points, {
-    int? totalDurationSeconds,
+    required int totalDurationSeconds,
   }) {
     return BottomTimeCalculator.secondsFromSamples([
       for (final point in points)
@@ -2383,6 +2442,12 @@ class TankData {
   /// from, or null when it reported none.
   final String? transmitterSerial;
 
+  /// Gear cylinder the transmitter registry linked this tank to, if any.
+  final String? equipmentId;
+
+  /// Display name from the transmitter registry's label, if any.
+  final String? tankName;
+
   const TankData({
     required this.index,
     required this.o2Percent,
@@ -2395,7 +2460,39 @@ class TankData {
     this.presetName,
     this.role,
     this.transmitterSerial,
+    this.equipmentId,
+    this.tankName,
   });
+
+  TankData copyWith({
+    int? index,
+    double? o2Percent,
+    double? hePercent,
+    double? startPressure,
+    double? endPressure,
+    double? volumeLiters,
+    double? workingPressure,
+    String? material,
+    String? presetName,
+    String? role,
+    String? transmitterSerial,
+    String? equipmentId,
+    String? tankName,
+  }) => TankData(
+    index: index ?? this.index,
+    o2Percent: o2Percent ?? this.o2Percent,
+    hePercent: hePercent ?? this.hePercent,
+    startPressure: startPressure ?? this.startPressure,
+    endPressure: endPressure ?? this.endPressure,
+    volumeLiters: volumeLiters ?? this.volumeLiters,
+    workingPressure: workingPressure ?? this.workingPressure,
+    material: material ?? this.material,
+    presetName: presetName ?? this.presetName,
+    role: role ?? this.role,
+    transmitterSerial: transmitterSerial ?? this.transmitterSerial,
+    equipmentId: equipmentId ?? this.equipmentId,
+    tankName: tankName ?? this.tankName,
+  );
 }
 
 /// Data class for importing a gas switch (a change to the cylinder at [toTankIndex]).

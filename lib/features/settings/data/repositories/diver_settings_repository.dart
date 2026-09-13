@@ -12,6 +12,7 @@ import 'package:submersion/core/domain/visibility/visibility_scale.dart';
 import 'package:submersion/core/utils/coordinates/coordinate_format.dart';
 import 'package:submersion/core/constants/dive_detail_layout.dart';
 import 'package:submersion/core/constants/dive_detail_sections.dart';
+import 'package:submersion/core/constants/enums.dart';
 import 'package:submersion/core/constants/gas_model.dart';
 import 'package:submersion/core/constants/list_view_mode.dart';
 import 'package:submersion/core/constants/map_style.dart';
@@ -87,6 +88,7 @@ class DiverSettingsRepository {
               altitudeUnit: Value(s.altitudeUnit.name),
               gasConsumptionDisplay: Value(s.gasConsumptionDisplay.name),
               gasModel: Value(s.gasModel.name),
+              defaultPlannerWaterType: Value(s.defaultPlannerWaterType.name),
               defaultCurrency: Value(s.defaultCurrency),
               visibilityScalePreset: Value(s.visibilityScalePreset.name),
               visibilityScaleExcellentM: Value(s.visibilityScaleExcellentM),
@@ -122,6 +124,13 @@ class DiverSettingsRepository {
                 _encodeDisabledRules(s.safetyReviewDisabledRules),
               ),
               noFlyPreset: Value(s.noFlyPreset.dbValue),
+              coldWaterThresholdC: Value(s.coldWaterThresholdC),
+              deepDiveThresholdM: Value(s.deepDiveThresholdM),
+              highO2ThresholdPercent: Value(s.highO2ThresholdPercent),
+              conditionEngineEnabled: Value(s.conditionEngineEnabled),
+              conditionDisabledRules: Value(
+                _encodeDisabledRules(s.conditionDisabledRules),
+              ),
               hiddenChamberIds: Value(_encodeDisabledRules(s.hiddenChamberIds)),
               emergencyRegion: Value(s.emergencyRegion),
               showAscentRateColors: Value(s.showAscentRateColors),
@@ -142,6 +151,8 @@ class DiverSettingsRepository {
               showDepthColoredDiveCards: Value(s.showDepthColoredDiveCards),
               cardColorAttribute: Value(s.cardColorAttribute.name),
               diveListViewMode: Value(s.diveListViewMode.name),
+              groupTripsInDiveList: Value(s.groupTripsInDiveList),
+              autoTagImports: Value(s.autoTagImports),
               siteListViewMode: Value(s.siteListViewMode.name),
               tripListViewMode: Value(s.tripListViewMode.name),
               equipmentListViewMode: Value(s.equipmentListViewMode.name),
@@ -256,6 +267,7 @@ class DiverSettingsRepository {
           altitudeUnit: Value(settings.altitudeUnit.name),
           gasConsumptionDisplay: Value(settings.gasConsumptionDisplay.name),
           gasModel: Value(settings.gasModel.name),
+          defaultPlannerWaterType: Value(settings.defaultPlannerWaterType.name),
           defaultCurrency: Value(settings.defaultCurrency),
           visibilityScalePreset: Value(settings.visibilityScalePreset.name),
           visibilityScaleExcellentM: Value(settings.visibilityScaleExcellentM),
@@ -291,6 +303,13 @@ class DiverSettingsRepository {
             _encodeDisabledRules(settings.safetyReviewDisabledRules),
           ),
           noFlyPreset: Value(settings.noFlyPreset.dbValue),
+          coldWaterThresholdC: Value(settings.coldWaterThresholdC),
+          deepDiveThresholdM: Value(settings.deepDiveThresholdM),
+          highO2ThresholdPercent: Value(settings.highO2ThresholdPercent),
+          conditionEngineEnabled: Value(settings.conditionEngineEnabled),
+          conditionDisabledRules: Value(
+            _encodeDisabledRules(settings.conditionDisabledRules),
+          ),
           hiddenChamberIds: Value(
             _encodeDisabledRules(settings.hiddenChamberIds),
           ),
@@ -313,6 +332,8 @@ class DiverSettingsRepository {
           showDepthColoredDiveCards: Value(settings.showDepthColoredDiveCards),
           cardColorAttribute: Value(settings.cardColorAttribute.name),
           diveListViewMode: Value(settings.diveListViewMode.name),
+          groupTripsInDiveList: Value(settings.groupTripsInDiveList),
+          autoTagImports: Value(settings.autoTagImports),
           siteListViewMode: Value(settings.siteListViewMode.name),
           tripListViewMode: Value(settings.tripListViewMode.name),
           equipmentListViewMode: Value(settings.equipmentListViewMode.name),
@@ -471,6 +492,9 @@ class DiverSettingsRepository {
         row.gasConsumptionDisplay,
       ),
       gasModel: GasModel.fromName(row.gasModel),
+      defaultPlannerWaterType:
+          PlannerWaterType.values.asNameMap()[row.defaultPlannerWaterType] ??
+          PlannerWaterType.salt,
       defaultCurrency: row.defaultCurrency,
       visibilityScalePreset: _parseVisibilityScalePreset(
         row.visibilityScalePreset,
@@ -508,6 +532,11 @@ class DiverSettingsRepository {
         row.safetyReviewDisabledRules,
       ),
       noFlyPreset: NoFlyPreset.fromDbValue(row.noFlyPreset),
+      coldWaterThresholdC: row.coldWaterThresholdC,
+      deepDiveThresholdM: row.deepDiveThresholdM,
+      highO2ThresholdPercent: row.highO2ThresholdPercent,
+      conditionEngineEnabled: row.conditionEngineEnabled,
+      conditionDisabledRules: _decodeDisabledRules(row.conditionDisabledRules),
       hiddenChamberIds: _decodeDisabledRules(row.hiddenChamberIds),
       emergencyRegion: row.emergencyRegion,
       showAscentRateColors: row.showAscentRateColors,
@@ -534,6 +563,8 @@ class DiverSettingsRepository {
       ),
       cardColorAttribute: CardColorAttribute.fromName(row.cardColorAttribute),
       diveListViewMode: ListViewMode.fromName(row.diveListViewMode),
+      groupTripsInDiveList: row.groupTripsInDiveList,
+      autoTagImports: row.autoTagImports,
       siteListViewMode: ListViewMode.fromName(row.siteListViewMode),
       tripListViewMode: ListViewMode.fromName(row.tripListViewMode),
       equipmentListViewMode: ListViewMode.fromName(row.equipmentListViewMode),

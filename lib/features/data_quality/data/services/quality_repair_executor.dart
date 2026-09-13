@@ -10,6 +10,7 @@ import 'package:submersion/features/data_quality/domain/entities/quality_finding
 import 'package:submersion/features/data_quality/domain/repairs/repair_predicates.dart';
 import 'package:submersion/features/dive_log/data/repositories/dive_repository_impl.dart';
 import 'package:submersion/features/dive_log/data/repositories/tank_pressure_repository.dart';
+import 'package:submersion/features/equipment/data/services/sensor_summary_scheduler.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart'
     as domain;
 
@@ -52,9 +53,19 @@ class QualityRepairExecutor {
   final ProfileRepairService _profiles;
   AppDatabase get _db => DatabaseService.instance.database;
 
+  /// Queues the targeted quality rescan and a forced rebuild of the
+  /// dives' sensor summaries, which the condition engine reads. Forced
+  /// because a repair (or its undo) can rewrite a profile or pressure
+  /// series without touching the dive's updated_at, which is what marks a
+  /// stored summary current.
+  static void _rescan(Iterable<String> diveIds) {
+    scheduleQualityScan(diveIds);
+    scheduleSensorSummaryRefresh(diveIds, force: true);
+  }
+
   Future<void> _finish(String findingId, Iterable<String> affected) async {
     await _findings.setStatus(findingId, QualityStatus.resolved);
-    scheduleQualityScan(affected);
+    _rescan(affected);
   }
 
   /// Dives sharing this dive's importId (for "shift the whole import").
@@ -84,7 +95,7 @@ class QualityRepairExecutor {
     return RepairResult.applied(() async {
       await _db.transaction(() => _diveRepo.restoreDiveTimes(snapshot));
       SyncEventBus.notifyLocalChange();
-      scheduleQualityScan(diveIds);
+      _rescan(diveIds);
     });
   }
 
@@ -111,7 +122,7 @@ class QualityRepairExecutor {
     await _finish(findingId, [diveId]);
     return RepairResult.applied(() async {
       await _profiles.undo(diveId); // restoreOriginalProfile notifies
-      scheduleQualityScan([diveId]);
+      _rescan([diveId]);
     });
   }
 
@@ -150,7 +161,7 @@ class QualityRepairExecutor {
         ),
       );
       SyncEventBus.notifyLocalChange();
-      scheduleQualityScan([diveId]);
+      _rescan([diveId]);
     });
   }
 
@@ -194,7 +205,7 @@ class QualityRepairExecutor {
     await _finish(findingId, [diveId]);
     return RepairResult.applied(() async {
       await write(prior);
-      scheduleQualityScan([diveId]);
+      _rescan([diveId]);
     });
   }
 
@@ -225,7 +236,7 @@ class QualityRepairExecutor {
         ),
       );
       SyncEventBus.notifyLocalChange();
-      scheduleQualityScan([diveId]);
+      _rescan([diveId]);
     });
   }
 
@@ -257,7 +268,7 @@ class QualityRepairExecutor {
     return RepairResult.applied(() async {
       await write(prior);
       SyncEventBus.notifyLocalChange();
-      scheduleQualityScan([diveId]);
+      _rescan([diveId]);
     });
   }
 
@@ -285,7 +296,7 @@ class QualityRepairExecutor {
         ),
       );
       SyncEventBus.notifyLocalChange();
-      scheduleQualityScan([diveId]);
+      _rescan([diveId]);
     });
   }
 
@@ -313,8 +324,66 @@ class QualityRepairExecutor {
         ),
       );
       SyncEventBus.notifyLocalChange();
-      scheduleQualityScan([diveId]);
+      _rescan([diveId]);
     });
+  }
+
+  /// Delete the redundant copy of a dive downloaded twice from one computer.
+  ///
+  /// Goes through [DiveRepository.deleteDive], the same path as the dive
+  /// list's own delete: row delete, sync tombstone, local-change notify. A
+  /// bare row delete would have the next sync resurrect the copy from any
+  /// peer that still holds it. Undo re-creates the dive from the entity read
+  /// beforehand, the way the list's bulk-delete Undo does; both ids are
+  /// rescanned so the pair's finding retires on the survivor.
+  Future<RepairResult> deleteDuplicate({
+    required String keepDiveId,
+    required String deleteDiveId,
+    required String findingId,
+  }) async {
+    if (keepDiveId == deleteDiveId) {
+      throw ArgumentError.value(
+        deleteDiveId,
+        'deleteDiveId',
+        'must differ from keepDiveId',
+      );
+    }
+    final doomed = await _diveRepo.getDivesByIds([deleteDiveId]);
+    // Already gone (deleted by hand, or by sync, since the scan). Nothing to
+    // do; the finding is left to the rescan rather than resolved on a fact
+    // this tap did not establish.
+    if (doomed.isEmpty) return const RepairResult.noChange();
+    final snapshot = doomed.single;
+    await _diveRepo.deleteDive(deleteDiveId);
+    await _finish(findingId, [keepDiveId, deleteDiveId]);
+    return RepairResult.applied(() async {
+      await _diveRepo.createDive(snapshot);
+      _rescan([keepDiveId, deleteDiveId]);
+    });
+  }
+
+  /// Exchange two tanks' computer bundles from the dive page, outside any
+  /// finding. Same write, notify and undo contract as [swapPressureSeries];
+  /// the targeted rescan lets a twin-tank finding clear itself.
+  Future<RepairResult> exchangeTankSources({
+    required String diveId,
+    required String tankIdA,
+    required String tankIdB,
+  }) async {
+    Future<void> run() async {
+      await _db.transaction(
+        () => _tankRepo.exchangeTankSources(
+          diveId: diveId,
+          tankIdA: tankIdA,
+          tankIdB: tankIdB,
+        ),
+      );
+      SyncEventBus.notifyLocalChange();
+      _rescan([diveId]);
+    }
+
+    await run();
+    return RepairResult.applied(run);
   }
 
   Future<RepairResult> setPrimarySource({

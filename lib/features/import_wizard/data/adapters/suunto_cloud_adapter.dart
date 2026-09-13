@@ -7,7 +7,8 @@ import 'package:submersion/core/services/logger_service.dart';
 import 'package:submersion/core/services/suunto_cloud/suunto_cloud_client.dart';
 import 'package:submersion/core/services/suunto_cloud/suunto_dive_parser.dart';
 import 'package:submersion/core/services/suunto_cloud/suunto_session_store.dart';
-import 'package:submersion/core/utils/unit_formatter.dart';
+import 'package:submersion/features/equipment/data/services/sensor_summary_scheduler.dart';
+import 'package:submersion/features/import_wizard/presentation/widgets/cloud_import_dive_summary.dart';
 import 'package:submersion/features/data_quality/data/services/quality_scan_service.dart';
 import 'package:submersion/features/dive_computer/data/services/dive_import_service.dart';
 import 'package:submersion/features/dive_computer/domain/entities/downloaded_dive.dart';
@@ -19,6 +20,7 @@ import 'package:submersion/features/dive_log/data/services/dive_consolidation_se
 import 'package:submersion/features/dive_log/domain/entities/dive_computer.dart';
 import 'package:submersion/features/dive_log/domain/services/unreadable_series_exception.dart';
 import 'package:submersion/features/import_wizard/data/adapters/cloud_computer_identity.dart';
+import 'package:submersion/features/import_wizard/data/adapters/dive_number_conflict_notice.dart';
 import 'package:submersion/features/import_wizard/domain/adapters/import_source_adapter.dart';
 import 'package:submersion/features/import_wizard/domain/models/duplicate_action.dart';
 import 'package:submersion/features/import_wizard/domain/models/import_cancellation_token.dart';
@@ -343,6 +345,9 @@ class SuuntoCloudAdapter implements ImportSourceAdapter {
             parsed,
             matchResult.diveId,
             comp,
+            // A dive the fold refuses is kept standalone, so it must carry
+            // the same number an import-as-new would have given it.
+            retainSourceDiveNumber: retainSourceDiveNumbers,
           );
           switch (result.outcome) {
             case _ConsolidateOutcome.consolidated:
@@ -392,6 +397,7 @@ class SuuntoCloudAdapter implements ImportSourceAdapter {
           diverId: _diverId,
           descriptorVendor: 'Suunto',
           descriptorProduct: parsed.deviceName,
+          retainSourceDiveNumber: retainSourceDiveNumbers,
         );
         imported++;
         importedDiveIds.add(diveId);
@@ -408,13 +414,20 @@ class SuuntoCloudAdapter implements ImportSourceAdapter {
     }
 
     scheduleQualityScan(importedDiveIds);
+    scheduleSensorSummaryRefresh(importedDiveIds);
 
+    final numberConflict = await diveNumberConflictNotice(
+      retainSourceDiveNumbers: retainSourceDiveNumbers,
+      diveRepository: _diveRepository,
+      importedDiveIds: importedDiveIds,
+    );
     return UnifiedImportResult(
       importedCounts: {ImportEntityType.dives: imported},
       consolidatedCount: consolidated,
       updatedCount: updated,
       skippedCount: skipped,
       importedDiveIds: importedDiveIds,
+      notices: [?numberConflict],
     );
   }
 
@@ -483,27 +496,19 @@ class SuuntoCloudAdapter implements ImportSourceAdapter {
   // ---------------------------------------------------------------------------
 
   EntityItem _diveToEntityItem(SuuntoParsedDive parsed) {
-    final dive = parsed.dive;
-    final localStart = dive.startTime.toLocal();
     final settings = _ref?.read(settingsProvider) ?? const AppSettings();
-    final units = UnitFormatter(settings);
-
-    final dateStr = units.formatDate(localStart);
-    final timeStr = units.formatTime(localStart);
-    final title = '$dateStr — $timeStr';
-    final durationMin = dive.duration.inMinutes;
-    final tempStr = dive.minTemperature != null
-        ? ' · ${units.formatTemperature(dive.minTemperature!, decimals: 1)}'
-        : '';
-    final subtitle =
-        '${units.formatDepth(dive.maxDepth)} max · $durationMin min$tempStr';
+    final summary = formatCloudDiveSummary(parsed.dive, settings);
 
     final diveData = IncomingDiveData.fromDownloadedDive(
-      dive,
+      parsed.dive,
       computer: _computerFor(parsed),
     );
 
-    return EntityItem(title: title, subtitle: subtitle, diveData: diveData);
+    return EntityItem(
+      title: summary.title,
+      subtitle: summary.subtitle,
+      diveData: diveData,
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -516,8 +521,9 @@ class SuuntoCloudAdapter implements ImportSourceAdapter {
   Future<_ConsolidateResult> _consolidateDive(
     SuuntoParsedDive parsed,
     String targetDiveId,
-    DiveComputer comp,
-  ) async {
+    DiveComputer comp, {
+    required bool retainSourceDiveNumber,
+  }) async {
     final targetComputerId = await _diveRepository.getComputerIdForDive(
       targetDiveId,
     );
@@ -533,6 +539,7 @@ class SuuntoCloudAdapter implements ImportSourceAdapter {
         diverId: _diverId,
         descriptorVendor: 'Suunto',
         descriptorProduct: parsed.deviceName,
+        retainSourceDiveNumber: retainSourceDiveNumber,
       );
       await _consolidationService.apply(
         targetDiveId: targetDiveId,

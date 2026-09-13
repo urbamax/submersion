@@ -30,10 +30,9 @@ const _columns = {
 
 void main() {
   test('v191 is present in the migration ladder', () {
-    // v191 is a past migration now: main landed v194
-    // (dive_tanks.transmitter_serial) and the suunto-nautic branch adds v192
-    // (dives.pp_o2_working). The exact-version assertion is the newest rung's
-    // own job; assert membership here, not equality.
+    // v191 is a past migration now (main is at v217, plus this branch's own
+    // v192 for dives.pp_o2_working). The exact-version assertion is the
+    // newest rung's own job; assert membership here, not equality.
     expect(AppDatabase.currentSchemaVersion, greaterThanOrEqualTo(191));
     expect(AppDatabase.migrationVersions, contains(191));
   });

@@ -45,10 +45,7 @@ class ServiceClocksCard extends ConsumerWidget {
     units: units,
     now: status.now,
     dueDate: status.dueDate,
-    divesSinceAnchor: status.divesSinceAnchor,
-    divesRemaining: status.divesRemaining,
-    hoursSinceAnchor: status.hoursSinceAnchor,
-    hoursRemaining: status.hoursRemaining,
+    usageByUnit: status.usageByUnit,
   );
 
   @override
@@ -141,12 +138,28 @@ class ServiceClocksCard extends ConsumerWidget {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(_triggerText(context, units, status)),
+                            // A baseline date, a service record, the
+                            // purchase date or the date the item was added
+                            // can each start a clock; say which date did.
+                            Text(
+                              l10n.equipment_serviceClocks_countingSince(
+                                units.formatDate(status.anchor),
+                              ),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                            ),
                             // An hours clock accrues from logged dive
                             // duration, which approximates but is not
                             // identical to rebreather loop time. Say so
                             // rather than leaving a diver to infer it from a
                             // scrubber budget.
-                            if (status.hoursRemaining != null)
+                            if (status.usageByUnit.keys.any(
+                              (u) => u.isFractional,
+                            ))
                               Text(
                                 l10n.equipment_serviceClocks_hoursSource,
                                 style: Theme.of(context).textTheme.bodySmall

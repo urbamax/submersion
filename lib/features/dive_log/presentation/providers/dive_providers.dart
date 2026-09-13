@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:submersion/core/constants/dive_search.dart';
+import 'package:submersion/core/constants/list_view_mode.dart';
 import 'package:submersion/core/constants/sort_options.dart';
 import 'package:submersion/core/models/sort_state.dart';
 import 'package:submersion/core/performance/perf_timer.dart';
@@ -22,6 +25,7 @@ import 'package:submersion/features/dive_log/domain/entities/dive_summary.dart';
 import 'package:submersion/features/dive_log/domain/models/dive_filter_state.dart';
 import 'package:submersion/features/dive_centers/presentation/providers/dive_center_providers.dart';
 import 'package:submersion/features/divers/presentation/providers/diver_providers.dart';
+import 'package:submersion/features/equipment/domain/models/equipment_attr_condition.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
 import 'package:submersion/features/trips/presentation/providers/trip_providers.dart';
 
@@ -71,34 +75,69 @@ final decoFilteredDiveIdsProvider = FutureProvider.family<Set<String>, bool>((
   );
 });
 
+/// The ids of every dive matching the equipment-attribute conditions.
+///
+/// Like [decoFilteredDiveIdsProvider], this exists because the in-memory
+/// path cannot evaluate the axis: a cylinder matched through the transmitter
+/// registry reaches the entity without its item or attributes. Keyed on
+/// [EquipmentAttrConditionsKey], which compares the list element by element,
+/// so a changed condition set lands on a fresh instance rather than briefly
+/// reusing the previous set's ids.
+final equipmentAttrFilteredDiveIdsProvider =
+    FutureProvider.family<Set<String>, EquipmentAttrConditionsKey>((
+      ref,
+      key,
+    ) async {
+      final diverId = ref.watch(currentDiverIdProvider);
+      final repository = ref.watch(diveRepositoryProvider);
+      ref.invalidateSelfWhen(repository.watchEquipmentAttrFilterChanges());
+      return repository.getDiveIdsMatchingEquipmentAttrs(
+        key.conditions,
+        diverId: diverId,
+      );
+    });
+
 /// Filtered dives provider - applies current filter to dive list
 final filteredDivesProvider = Provider<AsyncValue<List<domain.Dive>>>((ref) {
   final divesAsync = ref.watch(diveListNotifierProvider);
   final filter = ref.watch(diveFilterProvider);
 
-  final decoOnly = filter.decoOnly;
-  if (decoOnly == null) {
-    return divesAsync.whenData((dives) => filter.apply(dives));
-  }
+  // Axes the entity cannot answer resolve to SQL id sets; each one present
+  // narrows the in-memory result.
+  final idSets = <AsyncValue<Set<String>>>[
+    if (filter.decoOnly case final decoOnly?)
+      ref.watch(decoFilteredDiveIdsProvider(decoOnly)),
+    if (filter.equipmentAttrConditions.isNotEmpty)
+      ref.watch(
+        equipmentAttrFilteredDiveIdsProvider(
+          EquipmentAttrConditionsKey(filter.equipmentAttrConditions),
+        ),
+      ),
+  ];
 
-  final decoAsync = ref.watch(decoFilteredDiveIdsProvider(decoOnly));
-  // Built-in AsyncValue.value, not the repo's valueOrNull polyfill: it retains
-  // the previous ids across a reload, so a profile write does not blank the
-  // list. Null means first load (or a failure), never a stale answer.
-  final decoIds = decoAsync.value;
-  if (decoIds == null) {
-    if (decoAsync.hasError) {
-      return AsyncValue.error(
-        decoAsync.error!,
-        decoAsync.stackTrace ?? StackTrace.empty,
-      );
+  final resolved = <Set<String>>[];
+  for (final idsAsync in idSets) {
+    // Built-in AsyncValue.value, not the repo's valueOrNull polyfill: it
+    // retains the previous ids across a reload, so a write does not blank the
+    // list. Null means first load (or a failure), never a stale answer.
+    final ids = idsAsync.value;
+    if (ids == null) {
+      if (idsAsync.hasError) {
+        return AsyncValue.error(
+          idsAsync.error!,
+          idsAsync.stackTrace ?? StackTrace.empty,
+        );
+      }
+      return const AsyncValue.loading();
     }
-    return const AsyncValue.loading();
+    resolved.add(ids);
   }
 
   return divesAsync.whenData(
-    (dives) =>
-        filter.apply(dives).where((d) => decoIds.contains(d.id)).toList(),
+    (dives) => filter
+        .apply(dives)
+        .where((d) => resolved.every((ids) => ids.contains(d.id)))
+        .toList(),
   );
 });
 
@@ -131,6 +170,10 @@ final orderedDiveIdsProvider = FutureProvider.autoDispose<List<String>>((
   final sort = ref.watch(diveSortProvider);
   final repository = ref.watch(diveRepositoryProvider);
   ref.invalidateSelfWhen(repository.watchDivesChanges());
+  // An attribute condition makes the query read the gear tables (#1805).
+  if (filter.equipmentAttrConditions.isNotEmpty) {
+    ref.invalidateSelfWhen(repository.watchEquipmentAttrFilterChanges());
+  }
   return repository.getOrderedDiveIds(
     diverId: diverId,
     filter: filter,
@@ -333,6 +376,60 @@ final diveStatisticsProvider = FutureProvider<DiveStatistics>((ref) async {
   final currentDiverId = ref.watch(currentDiverIdProvider);
   ref.invalidateSelfWhen(repository.watchDivesChanges());
   return repository.getStatistics(diverId: currentDiverId);
+});
+
+/// Sort fields under which a trip's dives stay contiguous.
+///
+/// Both are chronological in practice, so a trip forms a single run whichever
+/// direction the sort runs in. Under any other sort a trip scatters, and
+/// grouping would fragment a 14-dive trip into a dozen one-dive headers, which
+/// is noisier than no grouping at all (issue #1193).
+const Set<DiveSortField> kChronologicalDiveSortFields = {
+  DiveSortField.date,
+  DiveSortField.diveNumber,
+};
+
+/// Whether the dive list should render trip group headers right now.
+///
+/// The toggle alone is not enough: grouping also needs a chronological sort
+/// and a card view mode. One place to reason about it, rather than the same
+/// three conditions repeated at every call site.
+final diveListGroupingEnabledProvider = Provider<bool>((ref) {
+  if (!ref.watch(diveListGroupTripsProvider)) return false;
+  final sort = ref.watch(diveSortProvider);
+  if (!kChronologicalDiveSortFields.contains(sort.field)) return false;
+  return ref.watch(diveListViewModeProvider) != ListViewMode.table;
+});
+
+/// Whether grouping is off *because of the sort*, rather than for any other
+/// reason.
+///
+/// Deliberately independent of the view mode. The paused notice blames the
+/// sort by name, so it must not appear when the real reason is something else:
+/// table mode ignores grouping by design, and saying "grouping is off while
+/// sorted by Date" there would be wrong twice over. Today the table never
+/// reaches the list body at all, but that is an early return in another
+/// method, which is too far away to rely on.
+final diveListGroupingPausedBySortProvider = Provider<bool>((ref) {
+  if (!ref.watch(diveListGroupTripsProvider)) return false;
+  final sort = ref.watch(diveSortProvider);
+  return !kChronologicalDiveSortFields.contains(sort.field);
+});
+
+/// Total dives per trip, keyed by trip id, for the dive list's group headers.
+///
+/// One query for the entire list rather than one per header. Takes the same
+/// dives tick as [diveStatisticsProvider] above, so assigning a dive to a
+/// trip, deleting one, or a sync pull corrects every header count without a
+/// manual invalidate.
+///
+/// Unfiltered on purpose: the header reads "6 of 14", and the 14 is the
+/// trip's real size, not its size under the current view filter (#1193).
+final tripDiveCountsProvider = FutureProvider<Map<String, int>>((ref) async {
+  final repository = ref.watch(diveRepositoryProvider);
+  final diverId = ref.watch(currentDiverIdProvider);
+  ref.invalidateSelfWhen(repository.watchDivesChanges());
+  return repository.getTripDiveCounts(diverId: diverId);
 });
 
 /// Dive records (superlatives) provider (filtered by current diver).
@@ -641,9 +738,12 @@ class PaginatedDiveListNotifier
     });
     _ref.listen<DiveFilterState>(diveFilterProvider, (previous, next) {
       if (previous != next) {
+        _followAttrFilterTick(next);
         loadFirstPage();
       }
     });
+    _followAttrFilterTick(_ref.read(diveFilterProvider));
+    _ref.onDispose(() => _attrFilterSub?.cancel());
     _ref.listen<SortState<DiveSortField>>(diveSortProvider, (previous, next) {
       if (previous != next) {
         loadFirstPage();
@@ -662,13 +762,40 @@ class PaginatedDiveListNotifier
     });
     loadFirstPage();
 
-    // Reload silently when the `dives` table is written directly (e.g. a sync
-    // applies remote changes) without going through this notifier's mutation
-    // methods. Silent so a multi-write sync doesn't flash a loading spinner.
-    final divesChangeSub = _repository.watchDivesChanges().listen(
+    // Reload silently when a table the list renders from is written directly
+    // (e.g. a sync applies remote changes) without going through this
+    // notifier's mutation methods. Silent so a multi-write sync doesn't flash
+    // a loading spinner.
+    //
+    // The list tick, not the dives one: the summary query joins sites and
+    // trips, so a trip rename or a site rename changes what is on screen
+    // without touching the dives table (#1193).
+    final listChangeSub = _repository.watchDiveListChanges().listen(
       (_) => _silentReloadLoadedPages(),
     );
-    _ref.onDispose(divesChangeSub.cancel);
+    _ref.onDispose(listChangeSub.cancel);
+  }
+
+  /// Subscription to [DiveRepository.watchEquipmentAttrFilterChanges], held
+  /// only while the filter has an equipment-attribute condition.
+  StreamSubscription<void>? _attrFilterSub;
+
+  /// Follows the equipment-attribute tick while [filter] has a condition
+  /// (#1805). The page and count then read the gear tables, which the list
+  /// tick does not watch, so a gear link or an attribute-only write (a sync
+  /// pull, saveAttributes) would otherwise leave them stale. Without a
+  /// condition nothing subscribes, so gear edits never reload an unfiltered
+  /// list.
+  void _followAttrFilterTick(DiveFilterState filter) {
+    final wanted = filter.equipmentAttrConditions.isNotEmpty;
+    if (wanted && _attrFilterSub == null) {
+      _attrFilterSub = _repository.watchEquipmentAttrFilterChanges().listen(
+        (_) => _silentReloadLoadedPages(),
+      );
+    } else if (!wanted && _attrFilterSub != null) {
+      _attrFilterSub!.cancel();
+      _attrFilterSub = null;
+    }
   }
 
   bool get _isDateSort {

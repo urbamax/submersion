@@ -7,11 +7,19 @@ import 'package:xml/xml.dart';
 
 import 'package:submersion/core/services/export/models/uddf_export_options.dart';
 import 'package:submersion/core/services/export/shared/file_export_utils.dart';
+import 'package:submersion/core/services/export/uddf/uddf_dives_extras.dart';
 import 'package:submersion/core/services/export/uddf/uddf_dump_codec.dart';
 import 'package:submersion/core/services/export/uddf/uddf_export_builders.dart';
+import 'package:submersion/core/services/export/uddf/uddf_gear_writers.dart';
+import 'package:submersion/core/services/export/uddf/uddf_participant_writers.dart';
+import 'package:submersion/core/services/export/uddf/uddf_site_classification_writers.dart';
+import 'package:submersion/features/buddies/domain/entities/buddy.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive_source_export.dart';
+import 'package:submersion/features/dive_roles/domain/entities/dive_role.dart';
 import 'package:submersion/features/dive_sites/domain/entities/dive_site.dart';
+import 'package:submersion/features/equipment/domain/entities/equipment_item.dart';
+import 'package:submersion/features/equipment/domain/entities/gear_link.dart';
 
 /// Handles simple UDDF export of dives with optional site data.
 class UddfExportService {
@@ -23,6 +31,7 @@ class UddfExportService {
     List<DiveSite>? sites,
     Map<String, Map<String, List<TankPressurePoint>>>? diveTankPressures,
     List<DiveSourceExport>? dataSources,
+    UddfDivesExtras extras = const UddfDivesExtras.empty(),
     UddfExportOptions options = const UddfExportOptions(),
   }) async {
     // Encoding happens before the XML build so the builders stay pure
@@ -38,6 +47,79 @@ class UddfExportService {
     final encodedById = <String, String?>{
       for (var i = 0; i < withBytes.length; i++) withBytes[i].id: encoded[i],
     };
+
+    // Sample pressures: the export actions load them into the extras; an
+    // explicit map is for callers that assemble the document themselves.
+    final pressuresByDive = diveTankPressures ?? extras.diveTankPressures;
+
+    // Participants (issue #1796): only the people on the exported dives,
+    // in dive order, and nobody at all when the user left them out of a
+    // shared file.
+    final diveBuddies = <String, List<BuddyWithRole>>{
+      if (options.includeParticipants)
+        for (final dive in dives)
+          if (extras.diveBuddies[dive.id] case final rows? when rows.isNotEmpty)
+            dive.id: rows,
+    };
+    final people = <String, Buddy>{
+      for (final rows in diveBuddies.values)
+        for (final row in rows) row.buddy.id: row.buddy,
+    }.values.toList(growable: false);
+    // A <buddyroles> row or a dive's <diverrole> naming a custom role is
+    // dropped on import unless the file also defines that role. Only the
+    // diver's own roles are defined: a synthetic role (an id with no row, or
+    // another diver's role) has nothing but its raw id for a name. The
+    // diver's own role is not a participant, so, like <diverrole> itself, it
+    // is defined whether or not participants are included.
+    final ownRoles = {for (final role in extras.diveRoles) role.id: role};
+    final customRoles = <String, DiveRole>{
+      for (final id in [
+        for (final rows in diveBuddies.values)
+          for (final row in rows) row.role.id,
+        for (final dive in dives) ?dive.diverRoleId,
+      ])
+        if (ownRoles[id] case final role?
+            when !DiveRole.builtInIds.contains(id))
+          id: role,
+    }.values.toList(growable: false);
+
+    // Gear (issue #1718): each distinct item on the exported dives, the
+    // assembly rows between two of them, and the dives' computers. None of
+    // it when the user left gear out.
+    final items = <String, EquipmentItem>{
+      if (options.includeGear)
+        for (final dive in dives)
+          for (final link in dive.gear) link.item.id: link.item,
+    }.values.toList(growable: false);
+    final itemIds = {for (final item in items) item.id};
+    final components = [
+      for (final c in extras.components)
+        if (itemIds.contains(c.parentEquipmentId) &&
+            itemIds.contains(c.componentEquipmentId))
+          c,
+    ];
+    final computerIds = options.includeGear
+        ? UddfGearWriters.computerIds(dives)
+        : const <String>{};
+    // Provenance may name only what this file declares: it shares no
+    // equipment sets, and a parent assembly counts only when it is itself one
+    // of the exported items. A row left with neither is plain gear, which the
+    // gear links section skips.
+    final gearLinkDives = [
+      if (options.includeGear)
+        for (final dive in dives)
+          dive.copyWith(
+            gear: [
+              for (final link in dive.gear)
+                GearLink(
+                  item: link.item,
+                  viaEquipmentId: itemIds.contains(link.viaEquipmentId)
+                      ? link.viaEquipmentId
+                      : null,
+                ),
+            ],
+          ),
+    ];
 
     final builder = XmlBuilder();
 
@@ -64,6 +146,31 @@ class UddfExportService {
             );
           },
         );
+
+        // Diver section: an id-only owner hosting the computer declarations,
+        // then the participants. Both trimmed, because this file is shared
+        // with other people.
+        if (computerIds.isNotEmpty || people.isNotEmpty) {
+          builder.element(
+            'diver',
+            nest: () {
+              if (computerIds.isNotEmpty) {
+                builder.element(
+                  'owner',
+                  attributes: {'id': 'owner'},
+                  nest: () {
+                    UddfGearWriters.writeOwnerComputers(builder, dives);
+                  },
+                );
+              }
+              UddfParticipantWriters.writeBuddyDeclarations(
+                builder,
+                people,
+                trimmed: true,
+              );
+            },
+          );
+        }
 
         // Dive sites
         if (sites != null || dives.any((d) => d.site != null)) {
@@ -123,6 +230,13 @@ class UddfExportService {
                         site.notes != site.description) {
                       builder.element('sitenotesadditional', nest: site.notes);
                     }
+                    // Shared with the full export's site builder (#1765).
+                    UddfSiteClassificationWriters.writeSiteRefs(
+                      builder,
+                      siteTypeIds:
+                          extras.siteTypeIdsBySite[site.id] ?? const [],
+                      tagIds: extras.siteTagIdsBySite[site.id] ?? const [],
+                    );
                   },
                 );
               }
@@ -237,11 +351,11 @@ class UddfExportService {
                                 attributes: {'ref': 'site_${dive.site!.id}'},
                               );
                             }
-                            if (dive.diveMaster != null &&
-                                dive.diveMaster!.isNotEmpty) {
-                              builder.element(
-                                'divemaster',
-                                nest: dive.diveMaster,
+                            if (options.includeParticipants) {
+                              UddfParticipantWriters.writeLeaders(
+                                builder,
+                                dive,
+                                diveBuddies[dive.id] ?? const [],
                               );
                             }
                             if (dive.diveCenter != null) {
@@ -263,36 +377,37 @@ class UddfExportService {
                                 nest: dive.entryMethod!.name,
                               );
                             }
+                            UddfExportBuilders.buildDiverRole(builder, dive);
+                            UddfExportBuilders.buildDiveGpsElements(
+                              builder,
+                              'entry',
+                              dive.entryLocation,
+                            );
+                            if (options.includeParticipants) {
+                              UddfParticipantWriters.writeLinks(
+                                builder,
+                                diveBuddies[dive.id] ?? const [],
+                              );
+                            }
+                            if (options.includeGear) {
+                              UddfGearWriters.writeEquipmentUsed(builder, dive);
+                            }
                           },
                         );
 
-                        // Samples (dive profile)
-                        builder.element(
-                          'samples',
-                          nest: () {
-                            final tank = dive.tanks.isNotEmpty
-                                ? dive.tanks.first
-                                : null;
-                            final mixId = tank != null
-                                ? 'mix_${tank.gasMix.o2.toInt()}_${tank.gasMix.he.toInt()}'
-                                : 'mix_21_0';
-
-                            // Add tank switch at start
-                            builder.element(
-                              'waypoint',
-                              nest: () {
-                                builder.element('divetime', nest: '0');
-                                builder.element('depth', nest: '0');
-                                builder.element(
-                                  'switchmix',
-                                  attributes: {'ref': mixId},
-                                );
-                              },
-                            );
-
-                            if (dive.profile.isNotEmpty) {
-                              // Use actual profile data
-                              for (final point in dive.profile) {
+                        // Samples: only what was recorded. <samples> is
+                        // optional in UDDF 3.2.1, so a dive without a profile
+                        // writes none rather than an invented one a restore
+                        // would store (issue #1874).
+                        if (dive.profile.isNotEmpty) {
+                          builder.element(
+                            'samples',
+                            nest: () {
+                              final startMix = UddfExportBuilders.startMixId(
+                                dive,
+                              );
+                              for (final (index, point)
+                                  in dive.profile.indexed) {
                                 builder.element(
                                   'waypoint',
                                   nest: () {
@@ -304,6 +419,14 @@ class UddfExportService {
                                       'depth',
                                       nest: point.depth.toString(),
                                     );
+                                    // The starting mix rides on the first
+                                    // recorded sample, as in the full backup.
+                                    if (index == 0) {
+                                      builder.element(
+                                        'switchmix',
+                                        attributes: {'ref': startMix},
+                                      );
+                                    }
                                     if (point.temperature != null) {
                                       builder.element(
                                         'temperature',
@@ -311,9 +434,10 @@ class UddfExportService {
                                             .toString(),
                                       ); // Kelvin
                                     }
-                                    // Tank pressure from tank_pressure_series
+                                    // Tank pressure from tank_pressure_series,
+                                    // naming the <tankdata> declared below.
                                     final divePressures =
-                                        diveTankPressures?[dive.id];
+                                        pressuresByDive[dive.id];
                                     if (divePressures != null) {
                                       for (final entry
                                           in divePressures.entries) {
@@ -325,6 +449,9 @@ class UddfExportService {
                                         if (pressure != null) {
                                           builder.element(
                                             'tankpressure',
+                                            attributes: {
+                                              'ref': 'tank_${entry.key}',
+                                            },
                                             nest: (pressure * 100000)
                                                 .toString(),
                                           );
@@ -334,68 +461,17 @@ class UddfExportService {
                                   },
                                 );
                               }
-                            } else {
-                              // Generate basic profile from dive data
-                              final durationSecs =
-                                  dive.bottomTime?.inSeconds ?? 0;
-                              if (dive.maxDepth != null && durationSecs > 0) {
-                                // Descent to max depth (assume 1/5 of dive)
-                                final descentTime = (durationSecs * 0.2)
-                                    .toInt();
-                                builder.element(
-                                  'waypoint',
-                                  nest: () {
-                                    builder.element(
-                                      'divetime',
-                                      nest: descentTime.toString(),
-                                    );
-                                    builder.element(
-                                      'depth',
-                                      nest: dive.maxDepth.toString(),
-                                    );
-                                    if (dive.waterTemp != null) {
-                                      builder.element(
-                                        'temperature',
-                                        nest: (dive.waterTemp! + 273.15)
-                                            .toString(),
-                                      );
-                                    }
-                                  },
-                                );
+                            },
+                          );
+                        }
 
-                                // Bottom time at avg depth (3/5 of dive)
-                                final bottomTime = (durationSecs * 0.8).toInt();
-                                builder.element(
-                                  'waypoint',
-                                  nest: () {
-                                    builder.element(
-                                      'divetime',
-                                      nest: bottomTime.toString(),
-                                    );
-                                    builder.element(
-                                      'depth',
-                                      nest:
-                                          (dive.avgDepth ??
-                                                  dive.maxDepth! * 0.7)
-                                              .toString(),
-                                    );
-                                  },
-                                );
-
-                                // Ascent to surface
-                                builder.element(
-                                  'waypoint',
-                                  nest: () {
-                                    builder.element(
-                                      'divetime',
-                                      nest: durationSecs.toString(),
-                                    );
-                                    builder.element('depth', nest: '0');
-                                  },
-                                );
-                              }
-                            }
-                          },
+                        // The dive's cylinders, where the full backup
+                        // declares them; their name and transmitter only
+                        // travel with the gear.
+                        UddfExportBuilders.writeTankData(
+                          builder,
+                          dive,
+                          includeIdentity: options.includeGear,
                         );
 
                         builder.element(
@@ -471,6 +547,11 @@ class UddfExportService {
                                 nest: dive.exitMethod!.name,
                               );
                             }
+                            UddfExportBuilders.buildDiveGpsElements(
+                              builder,
+                              'exit',
+                              dive.exitLocation,
+                            );
                             // Weight system
                             if (dive.weightAmount != null) {
                               builder.element(
@@ -523,20 +604,11 @@ class UddfExportService {
                                 },
                               );
                             }
-                            if (dive.buddy != null && dive.buddy!.isNotEmpty) {
-                              builder.element(
-                                'buddy',
-                                nest: () {
-                                  builder.element(
-                                    'personal',
-                                    nest: () {
-                                      builder.element(
-                                        'firstname',
-                                        nest: dive.buddy,
-                                      );
-                                    },
-                                  );
-                                },
+                            if (options.includeParticipants) {
+                              UddfParticipantWriters.writeInlineBuddies(
+                                builder,
+                                dive,
+                                diveBuddies[dive.id] ?? const [],
                               );
                             }
                             if (dive.customFields.isNotEmpty) {
@@ -565,39 +637,34 @@ class UddfExportService {
           },
         );
 
-        // This path has no top level <applicationdata><submersion> block of
-        // its own: the only <applicationdata> it writes is the per dive
-        // inline one for custom fields, a different element in a different
-        // position. So the source records get their own wrapper here. UDDF
-        // permits <applicationdata> in both places and the inline ones are
-        // untouched.
-        if (sources.isNotEmpty) {
-          builder.element(
-            'applicationdata',
-            nest: () {
-              builder.element(
-                'submersion',
-                attributes: {'version': '1.0'},
-                nest: () {
-                  UddfExportBuilders.buildDataSources(
-                    builder,
-                    sources,
-                    encodedById,
-                  );
-                },
-              );
-            },
-          );
-        }
+        // Every private section in one top level <applicationdata>
+        // <submersion>, as the full export writes it: the importer reads
+        // only the first top level block for everything except data
+        // sources. The per dive inline <applicationdata> for custom fields
+        // is a different element in a different position and is untouched.
+        UddfExportBuilders.buildApplicationData(
+          builder,
+          equipment: items,
+          omitPurchaseDetails: true,
+          components: components,
+          gearLinkDives: gearLinkDives,
+          diveBuddies: diveBuddies,
+          customDiveRoles: customRoles,
+          dataSources: sources,
+          dataSourceDumps: encodedById,
+          // The definitions the sites' type and tag references need.
+          tags: extras.siteTags,
+          customSiteTypes: extras.customSiteTypes,
+        );
 
-        // Last section, per the UDDF specification. The empty declared set is
-        // not an oversight: this export emits no <divecomputer> element, so
-        // any computer ref would dangle under IDREF validation.
+        // Last section, per the UDDF specification. A dump links only to a
+        // computer the owner block above declared, which it does only when
+        // gear is included.
         UddfExportBuilders.buildDiveComputerControl(
           builder,
           sources,
           encodedById,
-          declaredComputerIds: const {},
+          declaredComputerIds: computerIds,
         );
       },
     );
@@ -615,6 +682,7 @@ class UddfExportService {
     List<DiveSite>? sites,
     Map<String, Map<String, List<TankPressurePoint>>>? diveTankPressures,
     List<DiveSourceExport>? dataSources,
+    UddfDivesExtras extras = const UddfDivesExtras.empty(),
     UddfExportOptions options = const UddfExportOptions(),
   }) async {
     final xmlString = await generateDivesUddfContent(
@@ -622,6 +690,7 @@ class UddfExportService {
       sites: sites,
       diveTankPressures: diveTankPressures,
       dataSources: dataSources,
+      extras: extras,
       options: options,
     );
     return saveAndShareFile(xmlString, _fileName(), 'application/xml');
@@ -635,6 +704,7 @@ class UddfExportService {
     List<DiveSite>? sites,
     Map<String, Map<String, List<TankPressurePoint>>>? diveTankPressures,
     List<DiveSourceExport>? dataSources,
+    UddfDivesExtras extras = const UddfDivesExtras.empty(),
     UddfExportOptions options = const UddfExportOptions(),
   }) async {
     final xmlString = await generateDivesUddfContent(
@@ -642,6 +712,7 @@ class UddfExportService {
       sites: sites,
       diveTankPressures: diveTankPressures,
       dataSources: dataSources,
+      extras: extras,
       options: options,
     );
 

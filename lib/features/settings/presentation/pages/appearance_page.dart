@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:submersion/core/constants/map_style.dart';
+import 'package:submersion/features/equipment/presentation/widgets/equipment_arrange_sheet.dart';
 import 'package:submersion/core/providers/provider.dart';
 import 'package:submersion/core/theme/app_theme_registry.dart';
 import 'package:submersion/features/settings/presentation/pages/language_settings_page.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
+import 'package:submersion/features/settings/presentation/widgets/bathymetry_refresh_tile.dart';
 import 'package:submersion/features/settings/presentation/widgets/nav_customization_tile.dart';
 import 'package:submersion/features/settings/presentation/widgets/display_zoom_settings_tile.dart';
 import 'package:submersion/l10n/l10n_extension.dart';
@@ -36,11 +38,16 @@ String _sectionDisplayName(BuildContext context, String routeSegment) {
   };
 }
 
-class AppearancePage extends ConsumerWidget {
+class AppearancePage extends ConsumerStatefulWidget {
   const AppearancePage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<AppearancePage> createState() => _AppearancePageState();
+}
+
+class _AppearancePageState extends ConsumerState<AppearancePage> {
+  @override
+  Widget build(BuildContext context) {
     final settings = ref.watch(settingsProvider);
 
     return Scaffold(
@@ -112,6 +119,14 @@ class AppearancePage extends ConsumerWidget {
             ),
           ),
           const Divider(),
+          const BathymetryRefreshTile(
+            leading: FeatureAccentIcon(
+              Icons.refresh,
+              featureId: 'settings-appearance',
+              surface: AccentSurface.list,
+            ),
+          ),
+          const Divider(),
           const NavCustomizationTile(),
           const Divider(),
 
@@ -162,6 +177,22 @@ class AppearancePage extends ConsumerWidget {
             value: settings.accentListIcons,
             onChanged: (value) =>
                 ref.read(settingsProvider.notifier).setAccentListIcons(value),
+          ),
+          // Mirrors the arrange sheet reachable from every gear list, so the
+          // choice is also findable where a diver looks for display settings
+          // rather than only where the order annoyed them (#1486, #1576).
+          ListTile(
+            leading: const FeatureAccentIcon(
+              Icons.sort,
+              featureId: 'settings-appearance',
+              surface: AccentSurface.list,
+            ),
+            title: Text(context.l10n.settings_appearance_gearArrangement),
+            subtitle: Text(
+              context.l10n.settings_appearance_gearArrangementSubtitle,
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => showEquipmentArrangeSheet(context),
           ),
           const Divider(),
 

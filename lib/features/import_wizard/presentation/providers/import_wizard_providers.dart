@@ -49,6 +49,7 @@ class ImportWizardState {
     this.diveSortField = DiveReviewSortField.date,
     this.diveSortAscending = false,
     this.importTags = const [],
+    this.autoTagThisImport = false,
     this.importPhase,
     this.importCurrent = 0,
     this.importTotal = 0,
@@ -93,6 +94,15 @@ class ImportWizardState {
   /// Tags to apply to all imported dives.
   final List<TagSelection> importTags;
 
+  /// Whether auto-tagging applies to this import (issue #998): the review
+  /// step's Import Options switch. Seeded from the diver's saved
+  /// preference, then owned by the diver for the rest of the session.
+  ///
+  /// Tracked explicitly rather than inferred from [importTags] by name, so a
+  /// tag the diver typed or picked by hand that happens to share the default
+  /// name neither reads as auto-tagged nor gets removed by the switch.
+  final bool autoTagThisImport;
+
   /// The current import phase (e.g. dives, sites, applyingTags).
   final ImportPhase? importPhase;
 
@@ -128,6 +138,7 @@ class ImportWizardState {
     DiveReviewSortField? diveSortField,
     bool? diveSortAscending,
     List<TagSelection>? importTags,
+    bool? autoTagThisImport,
     ImportPhase? importPhase,
     bool clearImportPhase = false,
     int? importCurrent,
@@ -151,6 +162,7 @@ class ImportWizardState {
       diveSortField: diveSortField ?? this.diveSortField,
       diveSortAscending: diveSortAscending ?? this.diveSortAscending,
       importTags: importTags ?? this.importTags,
+      autoTagThisImport: autoTagThisImport ?? this.autoTagThisImport,
       importPhase: clearImportPhase ? null : (importPhase ?? this.importPhase),
       importCurrent: importCurrent ?? this.importCurrent,
       importTotal: importTotal ?? this.importTotal,
@@ -369,6 +381,36 @@ class ImportWizardNotifier extends StateNotifier<ImportWizardState> {
   /// duplicate rows never reach this path with a meaningful action — their
   /// action is set via [setDuplicateAction] from `DuplicateActionCard` — so
   /// this can't clobber a user's duplicate-resolution choice.
+  ///
+  /// A shift-click range can span a duplicate row in the middle without the
+  /// user intending to select it, so -- exactly like [selectAll] -- indices
+  /// in [EntityGroup.duplicateIndices] are never added by this method. They
+  /// stay eligible for [setSelections]'s removal path, though that's moot in
+  /// practice since they can never have been added in the first place.
+  void setSelections(ImportEntityType type, Set<int> indices, bool select) {
+    final current = state.selections[type] ?? const <int>{};
+    final updated = Set<int>.from(current);
+
+    if (select) {
+      final group = state.bundle?.groups[type];
+      final selectable = group == null
+          ? indices
+          : indices.difference(group.duplicateIndices);
+      updated.addAll(selectable);
+    } else {
+      updated.removeAll(indices);
+    }
+
+    final updatedPending = _drainPending(type, indices);
+    final updatedActions = _clearSeededSkip(type, indices, select);
+
+    state = state.copyWith(
+      selections: {...state.selections, type: updated},
+      duplicateActions: updatedActions,
+      pendingDuplicateReview: updatedPending,
+    );
+  }
+
   void toggleSelection(ImportEntityType type, int index) {
     final current = state.selections[type] ?? const <int>{};
     final updated = Set<int>.from(current);
@@ -482,31 +524,116 @@ class ImportWizardNotifier extends StateNotifier<ImportWizardState> {
   // Import tags
   // -------------------------------------------------------------------------
 
-  /// Pre-populate [importTags] with the adapter's default tag.
+  /// Seed this bundle's default tag, following the diver's saved
+  /// [autoTagImports] preference (issue #998): repeated imports otherwise
+  /// pile up one dated tag per session, for every source alike (dive
+  /// computer, file-based, cloud).
   ///
-  /// Safe to call multiple times — skips if a tag with the same name already
-  /// exists.
-  void initializeDefaultTag() {
-    final defaultName = _adapter.defaultTagName;
-    final alreadyExists = state.importTags.any(
-      (t) => t.name.toLowerCase() == defaultName.toLowerCase(),
-    );
-    if (alreadyExists) return;
+  /// Runs once per bundle, after [setBundle]. The first call seeds
+  /// [ImportWizardState.autoTagThisImport] from [autoTagImports]. A later
+  /// call -- Back from review, then Next again -- keeps whatever the diver
+  /// chose for this import instead, via the Import Options switch or the
+  /// chip's delete button, and swaps the previous bundle's chip for this
+  /// bundle's: the name comes from the selected file or device and the date,
+  /// either of which may have changed in between.
+  ///
+  /// [autoTagImports] is passed in by the caller rather than captured at
+  /// construction: this method runs well after acquisition, so reading the
+  /// setting here -- instead of baking in whatever `read` returned when the
+  /// wizard's `ProviderScope` was first built -- avoids picking up a stale
+  /// or default value for a diver switched to mid-session.
+  void initializeDefaultTag({required bool autoTagImports}) {
+    if (!_defaultTagSeeded) {
+      _defaultTagSeeded = true;
+      setAutoTagForThisImport(autoTagImports);
+      return;
+    }
 
-    state = state.copyWith(
-      importTags: [
-        ...state.importTags,
-        TagSelection(name: defaultName),
-      ],
-    );
+    final freshName = _adapter.defaultTagName;
+    if (_sameTagName(freshName, defaultTagName)) return;
+    final enabled = state.autoTagThisImport;
+    setAutoTagForThisImport(false);
+    _defaultTagName = freshName;
+    setAutoTagForThisImport(enabled);
   }
+
+  /// Whether [initializeDefaultTag] has seeded this session yet; after that,
+  /// the diver's per-import choice wins over the saved preference.
+  bool _defaultTagSeeded = false;
+
+  /// Whether the default chip in [ImportWizardState.importTags] was added by
+  /// auto-tagging, as opposed to a same-named tag the diver already had in
+  /// the list, which turning the switch off must leave alone.
+  bool _autoTagAddedChip = false;
+
+  /// This bundle's default tag name, fixed until [initializeDefaultTag]
+  /// installs the next bundle.
+  ///
+  /// Adapters build this string from `DateTime.now()`, so re-deriving it on
+  /// every read would drift to tomorrow's date if the review step is left
+  /// open across midnight: the Import Options switch would then look for a
+  /// name that no longer matches the chip already sitting in
+  /// [ImportWizardState.importTags], and add a second tag when turned back
+  /// on instead of toggling the original.
+  String? _defaultTagName;
+
+  /// The adapter's default "{source} Import {date}" tag name for the current
+  /// bundle (issue #998 follow-up). Stable within a review session -- see
+  /// [_defaultTagName].
+  String get defaultTagName => _defaultTagName ??= _adapter.defaultTagName;
+
+  /// The Import Options sheet's "tag this import" switch: whether
+  /// auto-tagging applies to this import. See
+  /// [ImportWizardState.autoTagThisImport].
+  bool get isAutoTagForThisImportEnabled => state.autoTagThisImport;
+
+  /// Adds or removes this bundle's default tag, for the Import Options
+  /// sheet's live switch (issue #998 follow-up).
+  ///
+  /// Session-only: unlike the diver's saved [AppSettings.autoTagImports]
+  /// preference that seeds every new import, toggling this never writes
+  /// back to that setting -- it only changes the tag list for the import
+  /// already in progress.
+  ///
+  /// Turning it on when a tag with the default name is already in the list
+  /// adds no duplicate, and turning it off again leaves that tag in place:
+  /// the diver put it there, not auto-tagging.
+  void setAutoTagForThisImport(bool enabled) {
+    if (enabled == state.autoTagThisImport) return;
+
+    final defaultName = defaultTagName;
+    final index = state.importTags.indexWhere(
+      (t) => _sameTagName(t.name, defaultName),
+    );
+    if (enabled) {
+      _autoTagAddedChip = index == -1;
+      state = state.copyWith(
+        autoTagThisImport: true,
+        importTags: _autoTagAddedChip
+            ? [...state.importTags, TagSelection(name: defaultName)]
+            : null,
+      );
+    } else {
+      final removeChip = _autoTagAddedChip && index != -1;
+      _autoTagAddedChip = false;
+      state = state.copyWith(
+        autoTagThisImport: false,
+        importTags: removeChip
+            ? (List<TagSelection>.from(state.importTags)..removeAt(index))
+            : null,
+      );
+    }
+  }
+
+  static bool _sameTagName(String a, String b) =>
+      a.toLowerCase() == b.toLowerCase();
 
   /// Add a tag to the import list.
   ///
   /// Silently ignores duplicates (case-insensitive name match).
   void addImportTag(TagSelection tag) {
     final alreadyExists = state.importTags.any(
-      (t) => t.name.toLowerCase() == tag.name.toLowerCase(),
+      (t) => _sameTagName(t.name, tag.name),
     );
     if (alreadyExists) return;
 
@@ -514,10 +641,21 @@ class ImportWizardNotifier extends StateNotifier<ImportWizardState> {
   }
 
   /// Remove a tag from the import list by index.
+  ///
+  /// Deleting the default chip while auto-tagging applies turns the Import
+  /// Options switch off with it, so the switch never claims a tag the import
+  /// no longer carries.
   void removeImportTag(int index) {
     if (index < 0 || index >= state.importTags.length) return;
+    final removesDefault =
+        state.autoTagThisImport &&
+        _sameTagName(state.importTags[index].name, defaultTagName);
+    if (removesDefault) _autoTagAddedChip = false;
     final updated = List<TagSelection>.from(state.importTags)..removeAt(index);
-    state = state.copyWith(importTags: updated);
+    state = state.copyWith(
+      importTags: updated,
+      autoTagThisImport: removesDefault ? false : null,
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -706,7 +844,11 @@ class ImportWizardNotifier extends StateNotifier<ImportWizardState> {
         bundle,
         state.selections,
         state.duplicateActions,
-        retainSourceDiveNumbers: state.retainSourceDiveNumbers,
+        // A source with no numbers has nothing to retain; the review step
+        // disables the option for it, and this keeps a stale "on" from
+        // reaching the adapter anyway (issue #1832).
+        retainSourceDiveNumbers:
+            state.retainSourceDiveNumbers && bundle.hasSourceDiveNumbers,
         onProgress: (phase, current, total) {
           state = state.copyWith(
             importPhase: phase,
@@ -798,6 +940,9 @@ class ImportWizardNotifier extends StateNotifier<ImportWizardState> {
 
   /// Return to the initial state.
   void reset() {
+    _defaultTagSeeded = false;
+    _autoTagAddedChip = false;
+    _defaultTagName = null;
     state = const ImportWizardState();
   }
 

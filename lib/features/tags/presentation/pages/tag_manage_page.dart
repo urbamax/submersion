@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:submersion/core/providers/provider.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:submersion/features/dive_sites/presentation/providers/site_providers.dart';
+import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
 import 'package:submersion/features/tags/data/repositories/tag_repository.dart';
 import 'package:submersion/features/tags/domain/entities/tag.dart';
 import 'package:submersion/features/tags/presentation/providers/tag_providers.dart';
+import 'package:submersion/features/dive_sites/presentation/site_tag_navigation.dart';
+import 'package:submersion/features/tags/presentation/tag_dives_navigation.dart';
 import 'package:submersion/features/tags/presentation/widgets/tag_input_widget.dart';
 import 'package:submersion/features/tags/presentation/widgets/tag_merge_sheet.dart';
 import 'package:submersion/l10n/l10n_extension.dart';
@@ -89,6 +93,10 @@ class _TagManagePageState extends ConsumerState<TagManagePage> {
                 ),
           body: Column(
             children: [
+              // Hidden during selection: this is a settings control, not
+              // part of the list being acted on, and the space is better
+              // spent on the list itself while a bulk action is in progress.
+              if (!selection.isActive) _buildAutoTagSection(),
               // Search stays visible during selection: narrowing the list
               // mid-selection is a supported move, and the selection prunes
               // to whatever remains.
@@ -105,6 +113,46 @@ class _TagManagePageState extends ConsumerState<TagManagePage> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Whether the import wizard auto-tags every new import session (issue
+  /// #998), plus its switch.
+  ///
+  /// Placed above the search bar, not as a wizard step, so the choice is a
+  /// standing preference rather than something re-decided at every import.
+  /// This is only the starting point for a new session -- the review step's
+  /// Import Options sheet lets the diver override it for a single import
+  /// without touching this default.
+  ///
+  /// Watches only [AppSettings.autoTagImports] via `select`, not the whole
+  /// [settingsProvider]: a change to any other setting elsewhere in the app
+  /// would otherwise rebuild this switch for no reason.
+  Widget _buildAutoTagSection() {
+    final autoTagImports = ref.watch(
+      settingsProvider.select((s) => s.autoTagImports),
+    );
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          child: Text(
+            context.l10n.tags_manage_importsSection,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+        ),
+        SwitchListTile(
+          title: Text(context.l10n.tags_manage_autoTagImports),
+          subtitle: Text(context.l10n.tags_manage_autoTagImports_subtitle),
+          value: autoTagImports,
+          onChanged: (value) {
+            ref.read(settingsProvider.notifier).setAutoTagImports(value);
+          },
+        ),
+        const Divider(height: 1),
+      ],
     );
   }
 
@@ -180,49 +228,94 @@ class _TagManagePageState extends ConsumerState<TagManagePage> {
         child: CircleAvatar(radius: 16, backgroundColor: tag.color),
       ),
       title: Text(tag.name),
-      trailing: Text(
-        context.l10n.tags_manage_diveCount(stat.diveCount),
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
+      // Where the tag is offered (issue #1765).
+      subtitle: Text(
+        [
+          if (tag.appliesToDives) context.l10n.tags_manage_scope_dives,
+          if (tag.appliesToSites) context.l10n.tags_manage_scope_sites,
+        ].join(' · '),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            [
+              context.l10n.tags_manage_diveCount(stat.diveCount),
+              if (stat.siteCount > 0)
+                context.l10n.tags_manage_siteCount(stat.siteCount),
+            ].join(', '),
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          // Editing moved off the row tap when the row started opening the
+          // tag's dives (#1833). Hidden while selecting, where a row tap
+          // toggles the row and a second target inside it would be a trap.
+          if (!_isSelectionMode)
+            IconButton(
+              key: ValueKey('tag_edit_${tag.id}'),
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: context.l10n.tags_manage_editTitle,
+              onPressed: () => _showEditDialog(tag),
+            ),
+        ],
       ),
       selected: isSelected,
+      // A tag used only on sites has no dives to show, so it opens its
+      // sites instead (issue #1765); every other tag opens its dives.
       onTap: _isSelectionMode
           ? () => _toggleSelection(tag.id)
-          : () => _showEditDialog(tag),
+          : tag.appliesToSites && !tag.appliesToDives
+          ? () => openSitesWithTag(context, ref, tag.id)
+          : () => openDivesWithTag(context, ref, tag.id),
+      // Without a handler a long press falls through to onTap, which is how
+      // it used to open the editor. Keep that, but not while selecting, where
+      // the fall-through toggles the row like a tap.
+      onLongPress: _isSelectionMode ? null : () => _showEditDialog(tag),
     );
   }
 
   void _showCreateDialog() {
     final controller = TextEditingController();
     String selectedColor = TagColors.predefined.first;
+    bool forDives = true;
+    bool forSites = false;
 
     showDialog(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
           title: Text(context.l10n.tags_manage_createTitle),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: controller,
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: context.l10n.tags_manage_nameLabel,
-                  border: const OutlineInputBorder(),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: context.l10n.tags_manage_nameLabel,
+                    border: const OutlineInputBorder(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Text(context.l10n.tags_manage_colorLabel),
-              const SizedBox(height: 8),
-              TagColorPicker(
-                selectedColor: selectedColor,
-                onColorSelected: (color) =>
-                    setDialogState(() => selectedColor = color),
-              ),
-            ],
+                const SizedBox(height: 16),
+                Text(context.l10n.tags_manage_colorLabel),
+                const SizedBox(height: 8),
+                TagColorPicker(
+                  selectedColor: selectedColor,
+                  onColorSelected: (color) =>
+                      setDialogState(() => selectedColor = color),
+                ),
+                const SizedBox(height: 8),
+                ..._scopeEditor(
+                  forDives: forDives,
+                  forSites: forSites,
+                  onDives: (v) => setDialogState(() => forDives = v),
+                  onSites: (v) => setDialogState(() => forSites = v),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -232,15 +325,14 @@ class _TagManagePageState extends ConsumerState<TagManagePage> {
             TextButton(
               onPressed: () {
                 final name = controller.text.trim();
-                if (name.isNotEmpty) {
-                  final newTag = Tag.create(
-                    id: _uuid.v4(),
-                    name: name,
-                    colorHex: selectedColor,
-                  );
-                  ref.read(tagListNotifierProvider.notifier).addTag(newTag);
-                  Navigator.pop(dialogContext);
-                }
+                if (name.isEmpty || (!forDives && !forSites)) return;
+                final newTag = Tag.create(
+                  id: _uuid.v4(),
+                  name: name,
+                  colorHex: selectedColor,
+                ).copyWith(appliesToDives: forDives, appliesToSites: forSites);
+                ref.read(tagListNotifierProvider.notifier).addTag(newTag);
+                Navigator.pop(dialogContext);
               },
               child: Text(context.l10n.common_action_save),
             ),
@@ -253,33 +345,44 @@ class _TagManagePageState extends ConsumerState<TagManagePage> {
   void _showEditDialog(Tag tag) {
     final controller = TextEditingController(text: tag.name);
     String selectedColor = tag.colorHex ?? TagColors.predefined.first;
+    bool forDives = tag.appliesToDives;
+    bool forSites = tag.appliesToSites;
 
     showDialog(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
           title: Text(context.l10n.tags_manage_editTitle),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: controller,
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: context.l10n.tags_manage_nameLabel,
-                  border: const OutlineInputBorder(),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: context.l10n.tags_manage_nameLabel,
+                    border: const OutlineInputBorder(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Text(context.l10n.tags_manage_colorLabel),
-              const SizedBox(height: 8),
-              TagColorPicker(
-                selectedColor: selectedColor,
-                onColorSelected: (color) =>
-                    setDialogState(() => selectedColor = color),
-              ),
-            ],
+                const SizedBox(height: 16),
+                Text(context.l10n.tags_manage_colorLabel),
+                const SizedBox(height: 8),
+                TagColorPicker(
+                  selectedColor: selectedColor,
+                  onColorSelected: (color) =>
+                      setDialogState(() => selectedColor = color),
+                ),
+                const SizedBox(height: 8),
+                ..._scopeEditor(
+                  forDives: forDives,
+                  forSites: forSites,
+                  onDives: (v) => setDialogState(() => forDives = v),
+                  onSites: (v) => setDialogState(() => forSites = v),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -287,20 +390,29 @@ class _TagManagePageState extends ConsumerState<TagManagePage> {
               child: Text(context.l10n.common_action_cancel),
             ),
             TextButton(
-              onPressed: () {
+              onPressed: () async {
                 final name = controller.text.trim();
-                if (name.isNotEmpty) {
-                  ref
-                      .read(tagListNotifierProvider.notifier)
-                      .updateTag(
-                        tag.copyWith(
-                          name: name,
-                          colorHex: selectedColor,
-                          updatedAt: DateTime.now(),
-                        ),
-                      );
-                  Navigator.pop(dialogContext);
-                }
+                if (name.isEmpty || (!forDives && !forSites)) return;
+                final confirmed = await _confirmNarrowing(
+                  tag,
+                  forDives: forDives,
+                  forSites: forSites,
+                );
+                if (!confirmed) return;
+                await ref
+                    .read(tagListNotifierProvider.notifier)
+                    .updateTag(
+                      tag.copyWith(
+                        name: name,
+                        colorHex: selectedColor,
+                        updatedAt: DateTime.now(),
+                        appliesToDives: forDives,
+                        appliesToSites: forSites,
+                      ),
+                    );
+                // Site cards and the site filter read tags too.
+                ref.invalidate(sitesWithCountsProvider);
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
               },
               child: Text(context.l10n.common_action_save),
             ),
@@ -308,6 +420,78 @@ class _TagManagePageState extends ConsumerState<TagManagePage> {
         ),
       ),
     );
+  }
+
+  /// "Use for dives" and "Use for sites" (issue #1765), with an error line
+  /// while neither is ticked.
+  List<Widget> _scopeEditor({
+    required bool forDives,
+    required bool forSites,
+    required ValueChanged<bool> onDives,
+    required ValueChanged<bool> onSites,
+  }) {
+    final l10n = context.l10n;
+    return [
+      CheckboxListTile(
+        contentPadding: EdgeInsets.zero,
+        title: Text(l10n.tags_manage_useForDives),
+        value: forDives,
+        onChanged: (v) => onDives(v ?? false),
+      ),
+      CheckboxListTile(
+        contentPadding: EdgeInsets.zero,
+        title: Text(l10n.tags_manage_useForSites),
+        value: forSites,
+        onChanged: (v) => onSites(v ?? false),
+      ),
+      if (!forDives && !forSites)
+        Text(
+          l10n.tags_manage_scopeRequired,
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
+    ];
+  }
+
+  /// Turning off a scope removes the tag from every dive or site carrying it
+  /// (the repository does that so a link always implies its scope). Asks
+  /// first when that would remove anything; true to go ahead.
+  Future<bool> _confirmNarrowing(
+    Tag tag, {
+    required bool forDives,
+    required bool forSites,
+  }) async {
+    final droppingDives = tag.appliesToDives && !forDives;
+    final droppingSites = tag.appliesToSites && !forSites;
+    if (!droppingDives && !droppingSites) return true;
+
+    final l10n = context.l10n;
+    final usage = await ref.read(tagRepositoryProvider).getTagUsage(tag.id);
+    final messages = [
+      if (droppingDives && usage.dives > 0)
+        l10n.tags_manage_narrowDialog_dives(usage.dives),
+      if (droppingSites && usage.sites > 0)
+        l10n.tags_manage_narrowDialog_sites(usage.sites),
+    ];
+    if (messages.isEmpty || !mounted) return true;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(dialogContext.l10n.tags_manage_narrowDialog_title),
+        content: Text(messages.join('\n\n')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(dialogContext.l10n.common_action_cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(dialogContext.l10n.tags_manage_narrowDialog_confirm),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
   }
 
   // -- Selection mode --
@@ -339,7 +523,7 @@ class _TagManagePageState extends ConsumerState<TagManagePage> {
     );
   }
 
-  Future<void> _confirmDelete(BuildContext context) async {
+  Future<BulkActionOutcome> _confirmDelete(BuildContext context) async {
     final repository = ref.read(tagRepositoryProvider);
     final statsAsync = ref.read(tagStatisticsProvider);
     final stats = statsAsync.valueOrNull ?? [];
@@ -370,16 +554,15 @@ class _TagManagePageState extends ConsumerState<TagManagePage> {
         ),
       );
 
-      if (confirmed == true) {
-        await ref.read(tagListNotifierProvider.notifier).deleteTag(tagId);
-        _exitSelectionMode();
-      }
+      if (confirmed != true) return BulkActionOutcome.cancelled;
+      await ref.read(tagListNotifierProvider.notifier).deleteTag(tagId);
+      return BulkActionOutcome.completed;
     } else {
       final totalDives = await repository.getMergedDiveCount(
         _selectedIds.toList(),
       );
 
-      if (!context.mounted) return;
+      if (!context.mounted) return BulkActionOutcome.cancelled;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -401,23 +584,22 @@ class _TagManagePageState extends ConsumerState<TagManagePage> {
         ),
       );
 
-      if (confirmed == true) {
-        await ref
-            .read(tagListNotifierProvider.notifier)
-            .deleteTags(_selectedIds.toList());
-        _exitSelectionMode();
-      }
+      if (confirmed != true) return BulkActionOutcome.cancelled;
+      await ref
+          .read(tagListNotifierProvider.notifier)
+          .deleteTags(_selectedIds.toList());
+      return BulkActionOutcome.completed;
     }
   }
 
-  Future<void> _showMergeSheet(BuildContext context) async {
+  Future<BulkActionOutcome> _showMergeSheet(BuildContext context) async {
     final statsAsync = ref.read(tagStatisticsProvider);
     final stats = statsAsync.valueOrNull ?? [];
     final selectedStats = stats
         .where((s) => _selectedIds.contains(s.tag.id))
         .toList();
 
-    if (selectedStats.length < 2) return;
+    if (selectedStats.length < 2) return BulkActionOutcome.cancelled;
 
     final merged = await showModalBottomSheet<bool>(
       context: context,
@@ -425,12 +607,10 @@ class _TagManagePageState extends ConsumerState<TagManagePage> {
       builder: (context) => TagMergeSheet(selectedStats: selectedStats),
     );
 
-    if (merged == true) {
-      _exitSelectionMode();
-    }
+    return merged == true
+        ? BulkActionOutcome.completed
+        : BulkActionOutcome.cancelled;
   }
-
-  void _exitSelectionMode() => _selection.exit();
 
   void _toggleSelection(String id) => _selection.toggle(id);
 }

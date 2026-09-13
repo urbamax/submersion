@@ -152,6 +152,7 @@ void main() {
         computerName: 'My Perdix',
         computerModel: 'Perdix',
         maxDepth: 30.0,
+        importedFileId: 'c0ffee',
         importedAt: now,
         createdAt: now,
       );
@@ -164,6 +165,7 @@ void main() {
       expect(source.props, contains('My Perdix'));
       expect(source.props, contains('Perdix'));
       expect(source.props, contains(30.0));
+      expect(source.props, contains('c0ffee'));
     });
 
     test('copyWith handles sourceFileName and sourceFileFormat', () {

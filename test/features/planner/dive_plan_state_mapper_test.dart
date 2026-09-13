@@ -66,7 +66,6 @@ void main() {
       gfLow: 30,
       gfHigh: 70,
       mode: domain.PlanMode.ccr,
-      waterType: WaterType.fresh,
       descentRate: 20.0,
       airBreaks: const AirBreakPolicy(),
       setpointHigh: 1.3,
@@ -87,12 +86,56 @@ void main() {
     expect(merged.setpointHigh, isNull);
     expect(merged.turnPressureRule, isNull);
     expect(merged.sourceDiveId, isNull);
-    // ...while aggregate-only fields survive the cycle.
-    expect(merged.waterType, WaterType.fresh);
-    expect(merged.airBreaks, isNotNull);
-    // descentRate is now STATE-owned (Phase 4), so the state's default wins
-    // over the existing plan's value.
+    // descentRate and airBreaks are now STATE-owned (Phase 4 / Phase 7), so
+    // the state's default (18.0 / no breaks) wins over the existing plan's
+    // value.
     expect(merged.descentRate, 18.0);
+    expect(merged.airBreaks, isNull);
+  });
+
+  test('air breaks round-trip through the state', () {
+    final withBreaks = state().copyWith(
+      airBreaks: const AirBreakPolicy(o2Seconds: 720, breakSeconds: 360),
+    );
+    final plan = divePlanFromState(withBreaks);
+    expect(plan.airBreaks, isNotNull);
+    expect(plan.airBreaks!.o2Seconds, 720);
+    expect(plan.airBreaks!.breakSeconds, 360);
+
+    final restored = stateFromDivePlan(plan);
+    expect(restored.airBreaks, isNotNull);
+    expect(restored.airBreaks!.o2Seconds, 720);
+    expect(restored.airBreaks!.breakSeconds, 360);
+
+    final cleared = restored.copyWith(clearAirBreaks: true);
+    final unset = divePlanFromState(cleared, existing: plan);
+    expect(unset.airBreaks, isNull);
+  });
+
+  test('water type round-trips through the state', () {
+    final typed = state().copyWith(waterType: WaterType.fresh);
+    final plan = divePlanFromState(typed);
+    expect(plan.waterType, WaterType.fresh);
+
+    final restored = stateFromDivePlan(plan);
+    expect(restored.waterType, WaterType.fresh);
+
+    final cleared = restored.copyWith(clearWaterType: true);
+    final merged = divePlanFromState(cleared, existing: plan);
+    expect(merged.waterType, isNull);
+  });
+
+  test('custom salinity round-trips through the state', () {
+    final typed = state().copyWith(salinityPpt: 20.0);
+    final plan = divePlanFromState(typed);
+    expect(plan.salinityPpt, 20.0);
+
+    final restored = stateFromDivePlan(plan);
+    expect(restored.salinityPpt, 20.0);
+
+    final cleared = restored.copyWith(clearSalinityPpt: true);
+    final merged = divePlanFromState(cleared, existing: plan);
+    expect(merged.salinityPpt, isNull);
   });
 
   test('ascent and descent rate round-trip through the state', () {

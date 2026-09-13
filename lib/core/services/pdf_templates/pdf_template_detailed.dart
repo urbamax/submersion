@@ -1,9 +1,13 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'dart:typed_data';
 
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import 'package:submersion/core/constants/enums.dart';
+import 'package:submersion/features/equipment/domain/models/equipment_arrangement.dart';
+import 'package:submersion/features/equipment/domain/services/equipment_arranger.dart';
+import 'package:submersion/features/equipment/domain/services/gear_tree.dart';
 import 'package:submersion/core/constants/pdf_templates.dart';
 import 'package:submersion/core/services/pdf_templates/pdf_date_formatter.dart';
 import 'package:submersion/core/services/pdf_templates/pdf_fonts.dart';
@@ -15,6 +19,7 @@ import 'package:submersion/core/services/pdf_templates/pdf_template_builder.dart
 import 'package:submersion/core/utils/unit_formatter.dart';
 import 'package:submersion/features/certifications/domain/entities/certification.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart';
+import 'package:submersion/features/dive_types/domain/entities/dive_type_entity.dart';
 import 'package:submersion/features/divers/domain/entities/diver.dart';
 import 'package:submersion/features/signatures/domain/entities/signature.dart';
 
@@ -40,6 +45,8 @@ class PdfTemplateDetailed extends PdfTemplateBuilder {
     Map<String, PdfProfileSeries>? profiles,
     Uint8List? diverPhoto,
     bool includeVerificationAreas = false,
+    EquipmentArrangement gearArrangement = EquipmentArrangement.defaults,
+    Map<String, DiveTypeEntity> diveTypesById = const {},
   }) async {
     final pdf = pw.Document(theme: PdfFonts.instance.theme);
     final pageFormat = getPageFormat(pageSize);
@@ -117,6 +124,8 @@ class PdfTemplateDetailed extends PdfTemplateBuilder {
             profile: _seriesFor(dive, profiles),
             signatures: diveSignatures?[dive.id],
             includeVerificationAreas: includeVerificationAreas,
+            gearArrangement: gearArrangement,
+            diveTypesById: diveTypesById,
           ),
         ),
       );
@@ -149,6 +158,8 @@ class PdfTemplateDetailed extends PdfTemplateBuilder {
     PdfProfileSeries? profile,
     List<Signature>? signatures,
     required bool includeVerificationAreas,
+    required EquipmentArrangement gearArrangement,
+    required Map<String, DiveTypeEntity> diveTypesById,
   }) {
     final chart = profile == null
         ? null
@@ -167,8 +178,14 @@ class PdfTemplateDetailed extends PdfTemplateBuilder {
       ..._section('Conditions', _conditionFields(dive, units: units)),
       ..._section('Weather', _weatherFields(dive, units: units)),
       ..._section('Team', _teamFields(dive)),
-      ..._section('Equipment', _equipmentFields(dive, units: units)),
-      ..._section('Technical', _technicalFields(dive)),
+      ..._section(
+        'Equipment',
+        _equipmentFields(dive, units: units, arrangement: gearArrangement),
+      ),
+      ..._section(
+        'Technical',
+        _technicalFields(dive, diveTypesById: diveTypesById),
+      ),
       ..._marineLifeSection(dive),
       ..._notesSection(dive),
       ..._customFieldsSection(dive),
@@ -395,19 +412,63 @@ class PdfTemplateDetailed extends PdfTemplateBuilder {
     ];
   }
 
+  /// Once the `dive_buddies` junction holds anyone it is authoritative, and the
+  /// legacy [Dive.buddy] / [Dive.diveMaster] text is stale (#1864). This is the
+  /// same rule as the dive list's Buddy and Dive Master columns.
   List<_Field> _teamFields(Dive dive) {
     return [
       for (final buddy in dive.buddies)
         _Field(buddy.role.name, buddy.buddy.name),
       if (dive.buddies.isEmpty && dive.buddy != null)
         _Field('Buddy', dive.buddy!),
-      if (dive.diveMaster != null) _Field('Dive Master', dive.diveMaster!),
+      if (dive.buddies.isEmpty && dive.diveMaster != null)
+        _Field('Dive Master', dive.diveMaster!),
       if (dive.diveCenter != null) _Field('Dive Center', dive.diveCenter!.name),
       if (dive.trip != null) _Field('Trip', dive.trip!.name),
     ];
   }
 
-  List<_Field> _equipmentFields(Dive dive, {required UnitFormatter units}) {
+  /// The Equipment section's rows as (label, value) pairs.
+  ///
+  /// Records rather than the private `_Field`, so exposing this for tests does
+  /// not leak a private type through a public API.
+  @visibleForTesting
+  List<({String label, String value})> equipmentFieldsForTest(
+    Dive dive, {
+    required UnitFormatter units,
+    required EquipmentArrangement arrangement,
+  }) => _equipmentFields(
+    dive,
+    units: units,
+    arrangement: arrangement,
+  ).map((f) => (label: f.label, value: f.value)).toList();
+
+  List<_Field> _equipmentFields(
+    Dive dive, {
+    required UnitFormatter units,
+    required EquipmentArrangement arrangement,
+  }) {
+    // The printed logbook is a document a human reads, so it follows the
+    // diver's display arrangement (#1486, #1576). The machine-readable
+    // exports (UDDF, CSV, Excel) deliberately do not; they take the
+    // repository's deterministic baseline instead, so their output does not
+    // churn with a display preference.
+    //
+    // displayName rather than a localized label: this template has no
+    // AppLocalizations in scope, which is exactly why arrangeEquipment takes
+    // the label resolver as a parameter.
+    //
+    // An assembly keeps its parts under it, indented, in template order
+    // (#1487). Set bands print without a heading: the template has no set
+    // catalog in scope to name them.
+    final buckets = GearTree.build(dive.gear);
+    List<_Field> rows(GearNode node, int depth) => [
+      _Field(
+        '${'  ' * depth}${node.link.item.type.displayName}',
+        node.link.item.name,
+      ),
+      for (final child in node.children) ...rows(child, depth + 1),
+    ];
     return [
       // The current editor writes Dive.weights; weightAmount is the legacy
       // scalar kept for older dives.
@@ -417,12 +478,31 @@ class PdfTemplateDetailed extends PdfTemplateBuilder {
         _Field('Weight', units.formatWeight(dive.weightAmount)),
       if (dive.weightType != null)
         _Field('Weight Type', dive.weightType!.displayName),
-      for (final item in dive.equipment)
-        _Field(item.type.displayName, item.name),
+      for (final bucket in buckets) ..._bucketRows(bucket, arrangement, rows),
     ];
   }
 
-  List<_Field> _technicalFields(Dive dive) {
+  List<_Field> _bucketRows(
+    GearBucket bucket,
+    EquipmentArrangement arrangement,
+    List<_Field> Function(GearNode node, int depth) rows,
+  ) {
+    final rootsById = {for (final n in bucket.roots) n.link.item.id: n};
+    return [
+      for (final group in arrangeEquipment(
+        [for (final n in bucket.roots) n.link.item],
+        arrangement,
+        typeLabel: (type) => type.displayName,
+      ))
+        for (final item in group.items) ...rows(rootsById[item.id]!, 0),
+    ];
+  }
+
+  List<_Field> _technicalFields(
+    Dive dive, {
+    required Map<String, DiveTypeEntity> diveTypesById,
+  }) {
+    final diveTypeNames = dive.diveTypeNamesFrom(diveTypesById);
     return [
       if (dive.diveComputerModel != null)
         _Field('Computer', dive.diveComputerModel!),
@@ -439,8 +519,8 @@ class PdfTemplateDetailed extends PdfTemplateBuilder {
         // pressure of oxygen, quoted in bar (or ata) whatever the diver's
         // cylinder-pressure preference. The CCR settings panel does the same.
         _Field('Setpoint', '${dive.setpointHigh} bar'),
-      if (dive.diveTypeNames.isNotEmpty)
-        _Field('Dive Type', dive.diveTypeNames.join(', ')),
+      if (diveTypeNames.isNotEmpty)
+        _Field('Dive Type', diveTypeNames.join(', ')),
     ];
   }
 

@@ -15,6 +15,7 @@ import 'package:submersion/features/dive_log/presentation/widgets/source_bar.dar
 import 'package:submersion/features/dive_log/presentation/widgets/run_dive_consolidation.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
 import 'package:submersion/l10n/l10n_extension.dart';
+import 'package:submersion/features/equipment/data/services/sensor_summary_scheduler.dart';
 
 /// Dialog that classifies the current dive selection and either previews a
 /// sequential combine, previews a multi-computer consolidation (same dive
@@ -26,8 +27,18 @@ import 'package:submersion/l10n/l10n_extension.dart';
 /// dive_consolidation_builder.dart / dive_consolidation_service.dart for the
 /// overlapping/consolidation path.
 class CombineDivesDialog extends ConsumerStatefulWidget {
-  const CombineDivesDialog({super.key, required this.diveIds});
+  const CombineDivesDialog({
+    super.key,
+    required this.diveIds,
+    this.consolidateOnly = false,
+  });
   final List<String> diveIds;
+
+  /// When true the selection is known to be a suspected duplicate (the data
+  /// quality inbox's Consolidate repair, #1690), so a sequential
+  /// classification is reported as "these dives don't overlap" instead of
+  /// being offered as a sequential combine.
+  final bool consolidateOnly;
   @override
   ConsumerState<CombineDivesDialog> createState() => _CombineDivesDialogState();
 }
@@ -83,6 +94,12 @@ class _CombineDivesDialogState extends ConsumerState<CombineDivesDialog> {
           .apply(widget.diveIds);
       // Re-scan the combined dives after the merge (fire-and-forget).
       scheduleQualityScan(widget.diveIds);
+      // The originals are gone and the merged dive is new: the condition
+      // engine reads its sensor summary, so build it now.
+      scheduleSensorSummaryRefresh([
+        ...widget.diveIds,
+        outcome.mergedDive.id,
+      ], force: true);
       if (mounted) Navigator.of(context).pop(outcome);
     } catch (_) {
       // The transaction rolled back -- nothing changed. Surface the failure
@@ -111,6 +128,10 @@ class _CombineDivesDialogState extends ConsumerState<CombineDivesDialog> {
             context.l10n.diveLog_combine_error,
           ),
           null => const Center(child: CircularProgressIndicator()),
+          MergeSequential() when widget.consolidateOnly => _buildErrorPanel(
+            context,
+            context.l10n.diveLog_consolidate_error_notOverlapping,
+          ),
           final MergeSequential seq => _buildPreview(context, seq),
           MergeOverlapping() => _buildConsolidationPanel(context),
           final MergeInvalid invalid => _buildErrorPanel(
@@ -670,7 +691,9 @@ class _CombineDivesDialogState extends ConsumerState<CombineDivesDialog> {
 Future<DiveMergeOutcome?> showCombineDivesDialog({
   required BuildContext context,
   required List<String> diveIds,
+  bool consolidateOnly = false,
 }) => showDialog<DiveMergeOutcome>(
   context: context,
-  builder: (_) => CombineDivesDialog(diveIds: diveIds),
+  builder: (_) =>
+      CombineDivesDialog(diveIds: diveIds, consolidateOnly: consolidateOnly),
 );

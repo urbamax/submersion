@@ -116,7 +116,9 @@ void main() {
       // Dive 3: not linked to this equipment at all.
       await insertDive('d3', 999, null);
 
-      final samples = await equipmentRepo.getUsageSamplesForEquipment(tank.id);
+      final samples = await equipmentRepo.getExposureSamplesForEquipment(
+        tank.id,
+      );
       expect(samples, hasLength(2));
       expect(samples.map((s) => s.durationSeconds).toSet(), {3600, 1800});
     },
@@ -170,9 +172,9 @@ void main() {
           );
     }
 
-    final all = await equipmentRepo.getUsageSamplesForEquipment(tank.id);
+    final all = await equipmentRepo.getExposureSamplesForEquipment(tank.id);
     expect(all, hasLength(2));
-    final recent = await equipmentRepo.getUsageSamplesForEquipment(
+    final recent = await equipmentRepo.getExposureSamplesForEquipment(
       tank.id,
       since: DateTime(2025, 1, 1),
     );
@@ -195,5 +197,31 @@ void main() {
       tombstones.map((r) => r.data['record_id']),
       containsAll(before.map((s) => s.id)),
     );
+  });
+
+  test('round-trips the baseline and its set time', () async {
+    // The set time is what lets a baseline outrank the records logged
+    // before it; clearing the baseline clears it too.
+    final tank = await makeTank();
+    final setAt = DateTime(2026, 9, 1, 8, 30);
+    final hydro = (await repo.getSchedulesForEquipment(
+      tank.id,
+    )).firstWhere((s) => s.serviceKindId == 'hydro');
+    await repo.updateSchedule(
+      hydro.withBaseline(DateTime(2025, 6, 1), now: setAt),
+    );
+
+    var stored = (await repo.getSchedulesForEquipment(
+      tank.id,
+    )).firstWhere((s) => s.serviceKindId == 'hydro');
+    expect(stored.anchorDate, DateTime(2025, 6, 1));
+    expect(stored.anchorSetAt, setAt);
+
+    await repo.updateSchedule(stored.withBaseline(null, now: DateTime.now()));
+    stored = (await repo.getSchedulesForEquipment(
+      tank.id,
+    )).firstWhere((s) => s.serviceKindId == 'hydro');
+    expect(stored.anchorDate, isNull);
+    expect(stored.anchorSetAt, isNull);
   });
 }

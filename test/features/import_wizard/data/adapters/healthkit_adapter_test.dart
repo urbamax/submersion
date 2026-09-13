@@ -14,10 +14,12 @@ import 'package:submersion/features/dive_import/domain/services/imported_dive_co
 import 'package:submersion/features/dive_log/data/repositories/dive_repository_impl.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart';
 import 'package:submersion/features/dive_sites/domain/entities/dive_site.dart';
+import 'package:submersion/features/equipment/domain/entities/gear_link.dart';
 import 'package:submersion/features/import_wizard/data/adapters/healthkit_adapter.dart';
 import 'package:submersion/features/import_wizard/domain/models/duplicate_action.dart';
 import 'package:submersion/features/import_wizard/presentation/widgets/healthkit_adapter_steps.dart';
 import 'package:submersion/features/import_wizard/domain/models/import_bundle.dart';
+import 'package:submersion/features/import_wizard/domain/models/import_notice.dart';
 import 'package:submersion/features/import_wizard/domain/models/import_phase.dart';
 import 'package:submersion/core/constants/map_style.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
@@ -45,10 +47,12 @@ ImportedDive makeDive({
   double? avgDepth = 10.0,
   double? minTemperature = 24.0,
   List<ImportedProfileSample> profile = const [],
+  int? diveNumber,
 }) {
   final start = startTime ?? DateTime(2026, 3, 15, 9, 00);
   final end = endTime ?? start.add(const Duration(minutes: 42));
   return ImportedDive(
+    diveNumber: diveNumber,
     sourceId: sourceId,
     source: ImportSource.appleWatch,
     startTime: start,
@@ -80,7 +84,7 @@ Dive makeDomainDive({
     diveTypeIds: [''],
     tanks: const [],
     profile: const [],
-    equipment: const [],
+    gear: looseGear(const []),
     photoIds: const [],
     sightings: const [],
   );
@@ -370,6 +374,100 @@ void main() {
   // performImport
   // -------------------------------------------------------------------------
 
+  group('dive numbering (issue #1832)', () {
+    test(
+      'numbers imported dives oldest-first from the next free number',
+      () async {
+        final newer = makeDive(
+          sourceId: 'healthkit-newer',
+          startTime: DateTime(2026, 3, 16, 9),
+        );
+        final older = makeDive(
+          sourceId: 'healthkit-older',
+          startTime: DateTime(2026, 3, 15, 9),
+        );
+        adapter.setParsedDives([newer, older]);
+        final bundle = await adapter.buildBundle();
+        var next = 8;
+        when(
+          mockRepo.getNextDiveNumber(diverId: diverId),
+        ).thenAnswer((_) async => next++);
+        when(
+          mockConverter.convert(
+            any,
+            diverId: anyNamed('diverId'),
+            diveNumber: anyNamed('diveNumber'),
+          ),
+        ).thenReturn(makeDomainDive());
+
+        await adapter.performImport(bundle, {
+          ImportEntityType.dives: {0, 1},
+        }, {});
+
+        verifyInOrder([
+          mockConverter.convert(older, diverId: diverId, diveNumber: 8),
+          mockConverter.convert(newer, diverId: diverId, diveNumber: 9),
+        ]);
+      },
+    );
+
+    test('keeps the source number when retaining it', () async {
+      final dive = makeDive(diveNumber: 30);
+      adapter.setParsedDives([dive]);
+      final bundle = await adapter.buildBundle();
+      when(
+        mockConverter.convert(
+          any,
+          diverId: anyNamed('diverId'),
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      ).thenReturn(makeDomainDive());
+
+      await adapter.performImport(
+        bundle,
+        {
+          ImportEntityType.dives: {0},
+        },
+        {},
+        retainSourceDiveNumbers: true,
+      );
+
+      verify(
+        mockConverter.convert(dive, diverId: diverId, diveNumber: 30),
+      ).called(1);
+      verifyNever(mockRepo.getNextDiveNumber(diverId: anyNamed('diverId')));
+    });
+
+    test('reports a retained number another dive already uses', () async {
+      final dive = makeDive(diveNumber: 30);
+      adapter.setParsedDives([dive]);
+      final bundle = await adapter.buildBundle();
+      when(
+        mockConverter.convert(
+          any,
+          diverId: anyNamed('diverId'),
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      ).thenReturn(makeDomainDive(id: 'healthkit-dive'));
+      when(
+        mockRepo.countDivesSharingDiveNumber(['healthkit-dive']),
+      ).thenAnswer((_) async => 1);
+
+      final result = await adapter.performImport(
+        bundle,
+        {
+          ImportEntityType.dives: {0},
+        },
+        {},
+        retainSourceDiveNumbers: true,
+      );
+
+      final notice = result.notices.single;
+      expect(notice.kind, ImportNoticeKind.diveNumberConflict);
+      expect(notice.count, 1);
+    });
+  });
+
   group('performImport()', () {
     test('imports selected dives via converter and repository', () async {
       final dive = makeDive();
@@ -378,7 +476,11 @@ void main() {
 
       final domainDive = makeDomainDive();
       when(
-        mockConverter.convert(dive, diverId: diverId),
+        mockConverter.convert(
+          dive,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive);
       when(mockRepo.createDive(domainDive)).thenAnswer((_) async => domainDive);
 
@@ -386,7 +488,13 @@ void main() {
         ImportEntityType.dives: {0},
       }, {});
 
-      verify(mockConverter.convert(dive, diverId: diverId)).called(1);
+      verify(
+        mockConverter.convert(
+          dive,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      ).called(1);
       verify(mockRepo.createDive(domainDive)).called(1);
       expect(result.importedCounts[ImportEntityType.dives], equals(1));
     });
@@ -399,7 +507,11 @@ void main() {
 
       final domainDive1 = makeDomainDive(id: 'dive-1');
       when(
-        mockConverter.convert(dive1, diverId: diverId),
+        mockConverter.convert(
+          dive1,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive1);
       when(
         mockRepo.createDive(domainDive1),
@@ -410,8 +522,20 @@ void main() {
         ImportEntityType.dives: {0},
       }, {});
 
-      verify(mockConverter.convert(dive1, diverId: diverId)).called(1);
-      verifyNever(mockConverter.convert(dive2, diverId: diverId));
+      verify(
+        mockConverter.convert(
+          dive1,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      ).called(1);
+      verifyNever(
+        mockConverter.convert(
+          dive2,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      );
       expect(result.importedCounts[ImportEntityType.dives], equals(1));
     });
 
@@ -431,7 +555,13 @@ void main() {
         },
       );
 
-      verifyNever(mockConverter.convert(any, diverId: anyNamed('diverId')));
+      verifyNever(
+        mockConverter.convert(
+          any,
+          diverId: anyNamed('diverId'),
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      );
       verifyNever(mockRepo.createDive(any));
       expect(result.skippedCount, equals(1));
       expect(result.importedCounts[ImportEntityType.dives], equals(0));
@@ -444,7 +574,11 @@ void main() {
 
       final domainDive = makeDomainDive();
       when(
-        mockConverter.convert(dive, diverId: diverId),
+        mockConverter.convert(
+          dive,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive);
       when(mockRepo.createDive(domainDive)).thenAnswer((_) async => domainDive);
 
@@ -457,7 +591,13 @@ void main() {
         },
       );
 
-      verify(mockConverter.convert(dive, diverId: diverId)).called(1);
+      verify(
+        mockConverter.convert(
+          dive,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      ).called(1);
       verify(mockRepo.createDive(domainDive)).called(1);
       expect(result.importedCounts[ImportEntityType.dives], equals(1));
     });
@@ -472,10 +612,18 @@ void main() {
       final domainDive1 = makeDomainDive(id: 'dive-1');
       final domainDive3 = makeDomainDive(id: 'dive-3');
       when(
-        mockConverter.convert(dive1, diverId: diverId),
+        mockConverter.convert(
+          dive1,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive1);
       when(
-        mockConverter.convert(dive3, diverId: diverId),
+        mockConverter.convert(
+          dive3,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive3);
       when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive1);
 
@@ -507,10 +655,18 @@ void main() {
       final domainDive1 = makeDomainDive(id: 'dive-1');
       final domainDive2 = makeDomainDive(id: 'dive-2');
       when(
-        mockConverter.convert(dive1, diverId: diverId),
+        mockConverter.convert(
+          dive1,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive1);
       when(
-        mockConverter.convert(dive2, diverId: diverId),
+        mockConverter.convert(
+          dive2,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive2);
       when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive1);
 
@@ -741,7 +897,7 @@ void main() {
         diveTypeIds: [''],
         tanks: const [],
         profile: const [],
-        equipment: const [],
+        gear: looseGear(const []),
         photoIds: const [],
         sightings: const [],
       );
@@ -777,7 +933,7 @@ void main() {
         diveTypeIds: [''],
         tanks: const [],
         profile: const [],
-        equipment: const [],
+        gear: looseGear(const []),
         photoIds: const [],
         sightings: const [],
       );
@@ -813,7 +969,7 @@ void main() {
         diveTypeIds: [''],
         tanks: const [],
         profile: const [],
-        equipment: const [],
+        gear: looseGear(const []),
         photoIds: const [],
         sightings: const [],
       );
@@ -850,7 +1006,7 @@ void main() {
           diveTypeIds: [''],
           tanks: const [],
           profile: const [],
-          equipment: const [],
+          gear: looseGear(const []),
           photoIds: const [],
           sightings: const [],
         );
@@ -894,7 +1050,7 @@ void main() {
         diveTypeIds: [''],
         tanks: const [],
         profile: const [],
-        equipment: const [],
+        gear: looseGear(const []),
         photoIds: const [],
         sightings: const [],
       );
@@ -974,7 +1130,7 @@ void main() {
         diveTypeIds: [''],
         tanks: const [],
         profile: const [],
-        equipment: const [],
+        gear: looseGear(const []),
         photoIds: const [],
         sightings: const [],
       );
@@ -1030,7 +1186,7 @@ void main() {
         diveTypeIds: [''],
         tanks: const [],
         profile: const [],
-        equipment: const [],
+        gear: looseGear(const []),
         photoIds: const [],
         sightings: const [],
       );
@@ -1265,7 +1421,13 @@ void main() {
 
       expect(result.importedCounts[ImportEntityType.dives], equals(0));
       expect(result.skippedCount, equals(0));
-      verifyNever(mockConverter.convert(any, diverId: anyNamed('diverId')));
+      verifyNever(
+        mockConverter.convert(
+          any,
+          diverId: anyNamed('diverId'),
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      );
       verifyNever(mockRepo.createDive(any));
     });
 
@@ -1289,7 +1451,13 @@ void main() {
       }, {});
 
       expect(result.importedCounts[ImportEntityType.dives], equals(0));
-      verifyNever(mockConverter.convert(any, diverId: anyNamed('diverId')));
+      verifyNever(
+        mockConverter.convert(
+          any,
+          diverId: anyNamed('diverId'),
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      );
     });
 
     test('returns importedDiveIds for each imported dive', () async {
@@ -1301,10 +1469,18 @@ void main() {
       final domainDive1 = makeDomainDive(id: 'uuid-aaa');
       final domainDive2 = makeDomainDive(id: 'uuid-bbb');
       when(
-        mockConverter.convert(dive1, diverId: diverId),
+        mockConverter.convert(
+          dive1,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive1);
       when(
-        mockConverter.convert(dive2, diverId: diverId),
+        mockConverter.convert(
+          dive2,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive2);
       when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive1);
 
@@ -1322,7 +1498,11 @@ void main() {
       final bundle = await adapter.buildBundle();
       final domainDive = makeDomainDive();
       when(
-        mockConverter.convert(any, diverId: anyNamed('diverId')),
+        mockConverter.convert(
+          any,
+          diverId: anyNamed('diverId'),
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive);
       when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive);
 
@@ -1343,7 +1523,11 @@ void main() {
 
         final domainDive1 = makeDomainDive(id: 'uuid-1');
         when(
-          mockConverter.convert(dive1, diverId: diverId),
+          mockConverter.convert(
+            dive1,
+            diverId: diverId,
+            diveNumber: anyNamed('diveNumber'),
+          ),
         ).thenReturn(domainDive1);
         when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive1);
 
@@ -1373,10 +1557,18 @@ void main() {
       final domainDive1 = makeDomainDive(id: 'uuid-1');
       final domainDive2 = makeDomainDive(id: 'uuid-2');
       when(
-        mockConverter.convert(dive1, diverId: diverId),
+        mockConverter.convert(
+          dive1,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive1);
       when(
-        mockConverter.convert(dive2, diverId: diverId),
+        mockConverter.convert(
+          dive2,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive2);
       when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive1);
 
@@ -1392,8 +1584,20 @@ void main() {
         },
       );
 
-      verify(mockConverter.convert(dive1, diverId: diverId)).called(1);
-      verify(mockConverter.convert(dive2, diverId: diverId)).called(1);
+      verify(
+        mockConverter.convert(
+          dive1,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      ).called(1);
+      verify(
+        mockConverter.convert(
+          dive2,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      ).called(1);
       expect(result.importedCounts[ImportEntityType.dives], equals(2));
     });
 
@@ -1406,7 +1610,11 @@ void main() {
 
       final domainDive = makeDomainDive();
       when(
-        mockConverter.convert(any, diverId: anyNamed('diverId')),
+        mockConverter.convert(
+          any,
+          diverId: anyNamed('diverId'),
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive);
       when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive);
 
@@ -1431,7 +1639,11 @@ void main() {
 
       final domainDive = makeDomainDive();
       when(
-        mockConverter.convert(any, diverId: anyNamed('diverId')),
+        mockConverter.convert(
+          any,
+          diverId: anyNamed('diverId'),
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive);
       when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive);
 
@@ -1451,7 +1663,11 @@ void main() {
 
       final domainDive1 = makeDomainDive(id: 'uuid-1');
       when(
-        mockConverter.convert(dive1, diverId: diverId),
+        mockConverter.convert(
+          dive1,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive1);
       when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive1);
 
@@ -1468,8 +1684,20 @@ void main() {
 
       expect(result.importedCounts[ImportEntityType.dives], equals(1));
       expect(result.skippedCount, equals(1));
-      verifyNever(mockConverter.convert(dive0, diverId: diverId));
-      verify(mockConverter.convert(dive1, diverId: diverId)).called(1);
+      verifyNever(
+        mockConverter.convert(
+          dive0,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      );
+      verify(
+        mockConverter.convert(
+          dive1,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      ).called(1);
     });
 
     test('all selected as skip results in zero imports', () async {
@@ -1493,7 +1721,13 @@ void main() {
 
       expect(result.importedCounts[ImportEntityType.dives], equals(0));
       expect(result.skippedCount, equals(2));
-      verifyNever(mockConverter.convert(any, diverId: anyNamed('diverId')));
+      verifyNever(
+        mockConverter.convert(
+          any,
+          diverId: anyNamed('diverId'),
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      );
     });
 
     test('all as importAsNew imports everything', () async {
@@ -1505,7 +1739,11 @@ void main() {
 
       final domainDive = makeDomainDive();
       when(
-        mockConverter.convert(any, diverId: anyNamed('diverId')),
+        mockConverter.convert(
+          any,
+          diverId: anyNamed('diverId'),
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive);
       when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive);
 
@@ -1532,7 +1770,11 @@ void main() {
 
       final domainDive = makeDomainDive();
       when(
-        mockConverter.convert(dive, diverId: diverId),
+        mockConverter.convert(
+          dive,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive);
       when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive);
 
@@ -1548,7 +1790,13 @@ void main() {
       );
 
       // Should still only import once (Set deduplicates)
-      verify(mockConverter.convert(dive, diverId: diverId)).called(1);
+      verify(
+        mockConverter.convert(
+          dive,
+          diverId: diverId,
+          diveNumber: anyNamed('diveNumber'),
+        ),
+      ).called(1);
       expect(result.importedCounts[ImportEntityType.dives], equals(1));
     });
 
@@ -1561,7 +1809,11 @@ void main() {
 
       final domainDive = makeDomainDive();
       when(
-        mockConverter.convert(any, diverId: anyNamed('diverId')),
+        mockConverter.convert(
+          any,
+          diverId: anyNamed('diverId'),
+          diveNumber: anyNamed('diveNumber'),
+        ),
       ).thenReturn(domainDive);
       when(mockRepo.createDive(any)).thenAnswer((_) async => domainDive);
 

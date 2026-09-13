@@ -17,12 +17,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:submersion/core/constants/profile_metrics.dart';
 import 'package:submersion/features/dive_log/domain/entities/safety_finding.dart';
+import 'package:submersion/features/equipment/domain/entities/equipment_finding.dart';
 import 'package:submersion/features/safety/domain/services/no_fly_service.dart';
+import 'package:submersion/core/constants/enums.dart';
 import 'package:submersion/core/constants/gas_model.dart';
 import 'package:submersion/core/constants/gas_consumption_display.dart';
 import 'package:submersion/core/constants/units.dart';
 import 'package:submersion/core/deco/entities/cns_calculation_method.dart';
 import 'package:submersion/core/presentation/startup_brightness.dart';
+import 'package:submersion/core/presentation/startup_theme.dart';
 import 'package:submersion/core/services/logger_service.dart';
 import 'package:submersion/features/divers/presentation/providers/diver_providers.dart';
 import 'package:submersion/features/notifications/data/services/notification_scheduler.dart';
@@ -137,6 +140,10 @@ class AppSettings {
   /// calculators (issue #828).
   final GasModel gasModel;
 
+  /// Default water type for a new dive plan. Salt unless the diver picks
+  /// fresh or a custom salinity in Settings > Units.
+  final PlannerWaterType defaultPlannerWaterType;
+
   /// ISO 4217 code used as the default currency for new priced items
   /// (e.g. equipment purchase price).
   final String defaultCurrency;
@@ -232,6 +239,19 @@ class AppSettings {
   /// Flying-after-diving conservatism preset
   final NoFlyPreset noFlyPreset;
 
+  /// Exposure thresholds for service clocks (v202), stored metric.
+  final double coldWaterThresholdC;
+  final double deepDiveThresholdM;
+  final double highO2ThresholdPercent;
+
+  /// Master toggle for condition findings (v206). Off: stored findings are
+  /// still shown, nothing new is computed.
+  final bool conditionEngineEnabled;
+
+  /// ConditionRuleId.dbValue strings whose findings are hidden in the UI.
+  /// Display-time only: the engine always runs every rule.
+  final Set<String> conditionDisabledRules;
+
   /// Bundled chamber ids hidden from the emergency card
   final Set<String> hiddenChamberIds;
 
@@ -298,6 +318,18 @@ class AppSettings {
 
   /// Which layout to use for the dive list
   final ListViewMode diveListViewMode;
+
+  /// Fold consecutive same-trip dives under a trip header in the dive list
+  /// (issue #1193). Applies to the card view modes only; the table ignores it.
+  final bool groupTripsInDiveList;
+
+  /// Pre-populate every new import session with a "{source} Import {date}"
+  /// tag (issue #998). Read by the import wizard when it enters the review
+  /// step, for every source alike (dive computer, file-based, cloud). This
+  /// only seeds the starting state -- the review step's Import Options sheet
+  /// lets the diver override it for that one import without changing this
+  /// default.
+  final bool autoTagImports;
 
   /// Which layout to use for the site list
   final ListViewMode siteListViewMode;
@@ -506,6 +538,7 @@ class AppSettings {
     this.altitudeUnit = AltitudeUnit.meters,
     this.gasConsumptionDisplay = GasConsumptionDisplay.both,
     this.gasModel = GasModel.real,
+    this.defaultPlannerWaterType = PlannerWaterType.salt,
     this.defaultCurrency = 'USD',
     this.visibilityScalePreset = VisibilityScalePreset.tropical,
     this.visibilityScaleExcellentM,
@@ -539,6 +572,11 @@ class AppSettings {
     this.safetyReviewEnabled = true,
     this.safetyReviewDisabledRules = const {},
     this.noFlyPreset = NoFlyPreset.standard,
+    this.coldWaterThresholdC = 10.0,
+    this.deepDiveThresholdM = 30.0,
+    this.highO2ThresholdPercent = 40.0,
+    this.conditionEngineEnabled = true,
+    this.conditionDisabledRules = const {},
     this.hiddenChamberIds = const {},
     this.emergencyRegion,
     this.showAscentRateColors = false,
@@ -561,6 +599,8 @@ class AppSettings {
     // Appearance defaults
     this.cardColorAttribute = CardColorAttribute.none,
     this.diveListViewMode = ListViewMode.detailed,
+    this.groupTripsInDiveList = false,
+    this.autoTagImports = true,
     this.siteListViewMode = ListViewMode.detailed,
     this.tripListViewMode = ListViewMode.detailed,
     this.equipmentListViewMode = ListViewMode.detailed,
@@ -674,6 +714,7 @@ class AppSettings {
     AltitudeUnit? altitudeUnit,
     GasConsumptionDisplay? gasConsumptionDisplay,
     GasModel? gasModel,
+    PlannerWaterType? defaultPlannerWaterType,
     String? defaultCurrency,
     VisibilityScalePreset? visibilityScalePreset,
     double? visibilityScaleExcellentM,
@@ -707,6 +748,11 @@ class AppSettings {
     bool? safetyReviewEnabled,
     Set<String>? safetyReviewDisabledRules,
     NoFlyPreset? noFlyPreset,
+    double? coldWaterThresholdC,
+    double? deepDiveThresholdM,
+    double? highO2ThresholdPercent,
+    bool? conditionEngineEnabled,
+    Set<String>? conditionDisabledRules,
     Set<String>? hiddenChamberIds,
     String? emergencyRegion,
     bool clearEmergencyRegion = false,
@@ -728,6 +774,8 @@ class AppSettings {
     CnsCalculationMethod? cnsCalculationMethod,
     CardColorAttribute? cardColorAttribute,
     ListViewMode? diveListViewMode,
+    bool? groupTripsInDiveList,
+    bool? autoTagImports,
     ListViewMode? siteListViewMode,
     ListViewMode? tripListViewMode,
     ListViewMode? equipmentListViewMode,
@@ -808,6 +856,8 @@ class AppSettings {
       gasConsumptionDisplay:
           gasConsumptionDisplay ?? this.gasConsumptionDisplay,
       gasModel: gasModel ?? this.gasModel,
+      defaultPlannerWaterType:
+          defaultPlannerWaterType ?? this.defaultPlannerWaterType,
       defaultCurrency: defaultCurrency ?? this.defaultCurrency,
       visibilityScalePreset:
           visibilityScalePreset ?? this.visibilityScalePreset,
@@ -848,6 +898,14 @@ class AppSettings {
       safetyReviewDisabledRules:
           safetyReviewDisabledRules ?? this.safetyReviewDisabledRules,
       noFlyPreset: noFlyPreset ?? this.noFlyPreset,
+      coldWaterThresholdC: coldWaterThresholdC ?? this.coldWaterThresholdC,
+      deepDiveThresholdM: deepDiveThresholdM ?? this.deepDiveThresholdM,
+      highO2ThresholdPercent:
+          highO2ThresholdPercent ?? this.highO2ThresholdPercent,
+      conditionEngineEnabled:
+          conditionEngineEnabled ?? this.conditionEngineEnabled,
+      conditionDisabledRules:
+          conditionDisabledRules ?? this.conditionDisabledRules,
       hiddenChamberIds: hiddenChamberIds ?? this.hiddenChamberIds,
       emergencyRegion: clearEmergencyRegion
           ? null
@@ -871,6 +929,8 @@ class AppSettings {
       cnsCalculationMethod: cnsCalculationMethod ?? this.cnsCalculationMethod,
       cardColorAttribute: cardColorAttribute ?? this.cardColorAttribute,
       diveListViewMode: diveListViewMode ?? this.diveListViewMode,
+      groupTripsInDiveList: groupTripsInDiveList ?? this.groupTripsInDiveList,
+      autoTagImports: autoTagImports ?? this.autoTagImports,
       siteListViewMode: siteListViewMode ?? this.siteListViewMode,
       tripListViewMode: tripListViewMode ?? this.tripListViewMode,
       equipmentListViewMode:
@@ -1163,7 +1223,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
           perdixOverlayY: perdixOverlayY,
           seascapeAppearance: seascapeAppearance,
         );
-        await _writeCachedThemeMode(prefs);
+        await _writeCachedTheme(prefs);
         return;
       }
 
@@ -1204,7 +1264,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
         await prefs.remove(SettingsKeys.seascapeAppearance);
       }
 
-      await _writeCachedThemeMode(prefs);
+      await _writeCachedTheme(prefs);
 
       // Schedule notifications with the loaded settings
       _scheduleNotificationsIfNeeded();
@@ -1279,7 +1339,7 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     if (perdixY != null) {
       await prefs.setDouble(SettingsKeys.perdixOverlayY, perdixY);
     }
-    await _writeCachedThemeMode(prefs);
+    await _writeCachedTheme(prefs);
 
     final diverId = _validatedDiverId;
     if (diverId == null) {
@@ -1295,14 +1355,22 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     await _repository.updateSettingsForDiver(diverId, state);
   }
 
-  /// Mirrors the effective theme mode into SharedPreferences so the startup
-  /// splash and setup wizard (which render before the database opens) can
-  /// resolve dark mode. See [resolveStartupBrightness].
-  Future<void> _writeCachedThemeMode(SharedPreferences prefs) async {
+  /// Mirrors the effective theme into SharedPreferences so the startup splash
+  /// and setup wizard (which render before the database opens) can resolve
+  /// both halves of it. See [resolveStartupBrightness] for the mode and
+  /// [resolveStartupThemePreset] for the preset.
+  Future<void> _writeCachedTheme(SharedPreferences prefs) async {
     await prefs.setString(
       cachedThemeModeKey,
       cachedThemeModeValue(state.themeMode),
     );
+    // Mirrored raw, not normalised through AppThemeRegistry. Normalising on
+    // write would be lossy in the one case that matters: a database written
+    // by a beta build can name a preset this build does not ship, and the
+    // splash renders before hydration, so a build that ships that preset
+    // again would meet a default already burned into the mirror. Reading is
+    // where an unknown id is resolved; see [resolveStartupThemePreset].
+    await prefs.setString(cachedThemePresetKey, state.themePresetId);
   }
 
   Future<void> setDepthUnit(DepthUnit unit) async {
@@ -1337,6 +1405,11 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
 
   Future<void> setGasModel(GasModel model) async {
     state = state.copyWith(gasModel: model);
+    await _saveSettings();
+  }
+
+  Future<void> setDefaultPlannerWaterType(PlannerWaterType type) async {
+    state = state.copyWith(defaultPlannerWaterType: type);
     await _saveSettings();
   }
 
@@ -1557,6 +1630,33 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
     await _saveSettings();
   }
 
+  Future<void> setColdWaterThresholdC(double value) =>
+      _commitThreshold(state.copyWith(coldWaterThresholdC: value));
+
+  /// A negative depth line would count every dive with a depth as deep.
+  Future<void> setDeepDiveThresholdM(double value) => _commitThreshold(
+    state.copyWith(deepDiveThresholdM: value < 0 ? 0.0 : value),
+  );
+
+  /// An O2 fraction outside 0 to 100 percent is not a mix that exists.
+  Future<void> setHighO2ThresholdPercent(double value) => _commitThreshold(
+    state.copyWith(highO2ThresholdPercent: value.clamp(0.0, 100.0).toDouble()),
+  );
+
+  /// Applies a threshold change and persists it, restoring the previous
+  /// state when the write fails so the editing page's error and retry match
+  /// what storage actually holds.
+  Future<void> _commitThreshold(AppSettings next) async {
+    final previous = state;
+    state = next;
+    try {
+      await _saveSettings();
+    } catch (_) {
+      state = previous;
+      rethrow;
+    }
+  }
+
   /// Show or hide one home gauge-strip chip type (id = HomeChipType.name).
   Future<void> setHomeChipEnabled(String chipId, bool enabled) async {
     final hidden = {...state.hiddenHomeChips};
@@ -1604,6 +1704,25 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
       rules.add(rule.dbValue);
     }
     state = state.copyWith(safetyReviewDisabledRules: rules);
+    await _saveSettings();
+  }
+
+  Future<void> setConditionEngineEnabled(bool value) async {
+    state = state.copyWith(conditionEngineEnabled: value);
+    await _saveSettings();
+  }
+
+  Future<void> setConditionRuleEnabled(
+    ConditionRuleId rule,
+    bool enabled,
+  ) async {
+    final rules = {...state.conditionDisabledRules};
+    if (enabled) {
+      rules.remove(rule.dbValue);
+    } else {
+      rules.add(rule.dbValue);
+    }
+    state = state.copyWith(conditionDisabledRules: rules);
     await _saveSettings();
   }
 
@@ -1723,6 +1842,28 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
 
   Future<void> setDiveListViewMode(ListViewMode mode) async {
     state = state.copyWith(diveListViewMode: mode);
+    await _saveSettings();
+  }
+
+  Future<void> setGroupTripsInDiveList(bool value) async {
+    state = state.copyWith(groupTripsInDiveList: value);
+    await _saveSettings();
+  }
+
+  /// Waits for [initialLoad] first: until the diver's row lands, [state]
+  /// holds the defaults, and a switch flipped on the tag management screen
+  /// in that window would be overwritten when the load replaces [state],
+  /// silently undoing the diver's choice (issue #998). A failed load is
+  /// already logged by the constructor and leaves the defaults in place,
+  /// so the change still applies on top of them.
+  Future<void> setAutoTagImports(bool value) async {
+    try {
+      await _initialLoad;
+    } catch (_) {
+      // See the doc comment: already logged, defaults are the fallback.
+    }
+    if (!mounted) return;
+    state = state.copyWith(autoTagImports: value);
     await _saveSettings();
   }
 
@@ -2241,6 +2382,10 @@ final safetyReviewDisabledRulesProvider = Provider<Set<String>>((ref) {
   return ref.watch(settingsProvider.select((s) => s.safetyReviewDisabledRules));
 });
 
+final conditionEngineEnabledProvider = Provider<bool>((ref) {
+  return ref.watch(settingsProvider.select((s) => s.conditionEngineEnabled));
+});
+
 final showAscentRateColorsProvider = Provider<bool>((ref) {
   return ref.watch(settingsProvider.select((s) => s.showAscentRateColors));
 });
@@ -2414,6 +2559,16 @@ final tissueVizModeProvider = Provider<TissueVizMode>((ref) {
 final diveListViewModeProvider = StateProvider<ListViewMode>((ref) {
   final settings = ref.read(settingsProvider);
   return settings.diveListViewMode;
+});
+
+/// Runtime-scoped "group trips" toggle for the dive list (issue #1193).
+///
+/// Same contract as [diveListViewModeProvider] directly above, and for the
+/// same reason: seeded once with `ref.read` so a write to any other setting
+/// cannot stomp a session override.
+final diveListGroupTripsProvider = StateProvider<bool>((ref) {
+  final settings = ref.read(settingsProvider);
+  return settings.groupTripsInDiveList;
 });
 
 final siteListViewModeProvider = StateProvider<ListViewMode>((ref) {

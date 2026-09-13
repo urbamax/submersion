@@ -110,11 +110,13 @@ import 'package:submersion/features/safety/presentation/pages/incident_edit_page
 import 'package:submersion/features/safety/presentation/pages/no_fly_page.dart';
 import 'package:submersion/features/safety/presentation/pages/incidents_list_page.dart';
 import 'package:submersion/features/safety/presentation/pages/emergency_card_page.dart';
+import 'package:submersion/features/settings/presentation/pages/equipment_condition_settings_page.dart';
 import 'package:submersion/features/settings/presentation/pages/safety_settings_page.dart';
 import 'package:submersion/features/settings/presentation/pages/language_settings_page.dart';
 import 'package:submersion/features/settings/presentation/pages/nav_customization_page.dart';
 import 'package:submersion/features/settings/presentation/pages/theme_gallery_page.dart';
 import 'package:submersion/features/settings/presentation/pages/storage_settings_page.dart';
+import 'package:submersion/features/backup/presentation/pages/unrecognized_backups_page.dart';
 import 'package:submersion/features/settings/presentation/pages/storage_usage_page.dart';
 import 'package:submersion/features/settings/presentation/pages/diver_profile_hub_page.dart';
 import 'package:submersion/features/settings/presentation/pages/personal_info_edit_page.dart';
@@ -130,9 +132,14 @@ import 'package:submersion/features/media/presentation/pages/network_sources_pag
 import 'package:submersion/features/settings/presentation/pages/section_appearance_page.dart';
 import 'package:submersion/features/transfer/presentation/pages/transfer_page.dart';
 import 'package:submersion/features/dive_types/presentation/pages/dive_types_page.dart';
+import 'package:submersion/features/site_types/presentation/pages/site_types_page.dart';
 import 'package:submersion/features/dive_roles/presentation/pages/dive_roles_page.dart';
 import 'package:submersion/features/tank_presets/presentation/pages/tank_presets_page.dart';
+import 'package:submersion/features/weight_presets/presentation/pages/weight_preset_editor_page.dart';
+import 'package:submersion/features/weight_presets/presentation/pages/weight_presets_page.dart';
 import 'package:submersion/features/tank_presets/presentation/pages/tank_preset_edit_page.dart';
+import 'package:submersion/features/transmitters/presentation/pages/transmitter_edit_page.dart';
+import 'package:submersion/features/transmitters/presentation/pages/transmitters_page.dart';
 import 'package:submersion/features/marine_life/presentation/pages/species_manage_page.dart';
 import 'package:submersion/features/marine_life/presentation/pages/species_page.dart';
 import 'package:submersion/features/tags/presentation/pages/tag_manage_page.dart';
@@ -538,7 +545,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 path: 'new',
                 name: 'newEquipment',
-                builder: (context, state) => const EquipmentEditPage(),
+                builder: (context, state) => EquipmentEditPage(
+                  initialParentId: state.uri.queryParameters['parent'],
+                ),
               ),
               GoRoute(
                 path: 'sets',
@@ -1031,6 +1040,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 path: 'storage-usage',
                 name: 'storageUsage',
                 builder: (context, state) => const StorageUsagePage(),
+                routes: [
+                  GoRoute(
+                    path: 'unrecognized-backups',
+                    name: 'unrecognizedBackups',
+                    builder: (context, state) =>
+                        const UnrecognizedBackupsPage(),
+                  ),
+                ],
               ),
               GoRoute(
                 path: 'data-quality',
@@ -1119,6 +1136,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 path: 'safety',
                 name: 'safetySettings',
                 builder: (context, state) => const SafetySettingsPage(),
+              ),
+              GoRoute(
+                path: 'equipment-condition',
+                name: 'equipmentConditionSettings',
+                builder: (context, state) =>
+                    const EquipmentConditionSettingsPage(),
               ),
               GoRoute(
                 path: 'default-metrics',
@@ -1315,12 +1338,41 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             name: 'diveTypes',
             builder: (context, state) => const DiveTypesPage(),
           ),
+          // Site Types Management (issue #1765)
+          GoRoute(
+            path: '/site-types',
+            name: 'siteTypes',
+            builder: (context, state) => const SiteTypesPage(),
+          ),
 
           // Dive Roles Management
           GoRoute(
             path: '/dive-roles',
             name: 'diveRoles',
             builder: (context, state) => const DiveRolesPage(),
+          ),
+
+          // Transmitter registry (issue #1365)
+          GoRoute(
+            path: '/transmitters',
+            name: 'transmitters',
+            builder: (context, state) => const TransmittersPage(),
+            routes: [
+              GoRoute(
+                path: 'new',
+                name: 'newTransmitter',
+                builder: (context, state) => TransmitterEditPage(
+                  initialSerial: state.uri.queryParameters['serial'],
+                ),
+              ),
+              GoRoute(
+                path: ':transmitterId/edit',
+                name: 'editTransmitter',
+                builder: (context, state) => TransmitterEditPage(
+                  transmitterId: state.pathParameters['transmitterId'],
+                ),
+              ),
+            ],
           ),
 
           // Tank Presets Management
@@ -1338,6 +1390,27 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 path: ':presetId/edit',
                 name: 'editTankPreset',
                 builder: (context, state) => TankPresetEditPage(
+                  presetId: state.pathParameters['presetId'],
+                ),
+              ),
+            ],
+          ),
+
+          // Weight Presets Management (issue #1609, #1663)
+          GoRoute(
+            path: '/weight-presets',
+            name: 'weightPresets',
+            builder: (context, state) => const WeightPresetsPage(),
+            routes: [
+              GoRoute(
+                path: 'new',
+                name: 'newWeightPreset',
+                builder: (context, state) => const WeightPresetEditorPage(),
+              ),
+              GoRoute(
+                path: ':presetId/edit',
+                name: 'editWeightPreset',
+                builder: (context, state) => WeightPresetEditorPage(
                   presetId: state.pathParameters['presetId'],
                 ),
               ),

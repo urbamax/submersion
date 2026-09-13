@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:submersion/core/services/export/models/uddf_export_options.dart';
+import 'package:submersion/core/services/export/csv/codec/csv_export_units.dart';
+import 'package:submersion/core/services/export/uddf/uddf_dives_extras.dart';
 import 'package:submersion/core/services/export/uddf/uddf_source_fetch.dart';
 
 import 'package:submersion/core/constants/card_color.dart';
@@ -24,17 +26,22 @@ import 'package:submersion/features/transfer/presentation/widgets/pdf_export_dia
 import 'package:submersion/core/utils/unit_formatter.dart';
 import 'package:submersion/features/dive_log/presentation/providers/highlight_providers.dart';
 import 'package:submersion/features/dive_log/presentation/providers/view_config_providers.dart';
+import 'package:submersion/features/dive_log/presentation/helpers/dive_list_sections.dart';
+import 'package:submersion/features/dive_log/presentation/providers/trip_group_collapse_provider.dart';
 import 'package:submersion/features/dive_log/presentation/widgets/dive_list_item.dart';
+import 'package:submersion/features/dive_log/presentation/widgets/trip_group_header.dart';
 import 'package:submersion/shared/widgets/export_destination_sheet.dart';
 import 'package:submersion/shared/widgets/list_view_mode_toggle.dart';
 import 'package:submersion/shared/widgets/master_detail/map_view_toggle_button.dart';
 import 'package:submersion/shared/widgets/master_detail/responsive_breakpoints.dart';
 import 'package:submersion/shared/widgets/sort_bottom_sheet.dart';
 import 'package:submersion/features/dive_sites/presentation/providers/site_providers.dart';
+import 'package:submersion/features/settings/presentation/providers/csv_unit_mode_provider.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
 import 'package:submersion/features/settings/presentation/providers/export_providers.dart';
 import 'package:submersion/features/dive_log/presentation/formatters/dive_type_label_resolver.dart';
 import 'package:submersion/features/dive_types/presentation/dive_type_display.dart';
+import 'package:submersion/features/dive_types/domain/entities/dive_type_entity.dart';
 import 'package:submersion/features/dive_types/presentation/providers/dive_type_providers.dart';
 import 'package:submersion/features/equipment/presentation/providers/equipment_providers.dart';
 import 'package:submersion/features/trips/presentation/providers/trip_providers.dart';
@@ -59,6 +66,7 @@ import 'package:submersion/shared/selection/selection_controller.dart';
 import 'package:submersion/shared/selection/selection_state.dart';
 import 'package:submersion/shared/widgets/app_date_picker.dart';
 import 'package:submersion/shared/widgets/feature_accent.dart';
+import 'package:submersion/features/equipment/data/services/sensor_summary_scheduler.dart';
 
 /// True if [d]'s date falls within [r], inclusive of the end calendar day.
 bool inDateRange(DiveSummary d, DateTimeRange r) {
@@ -75,6 +83,24 @@ enum _BulkExportFormat { pdf, csv, uddf }
 ///
 /// This widget contains the core list functionality extracted from DiveListPage.
 /// It can be used standalone (mobile) or as the master pane in a split view (desktop).
+/// Height of the grouping-paused notice row, when it is showing.
+///
+/// This must equal what the notice actually renders at: 8px of top padding
+/// over a Row whose height comes from the action button's 48px tap target.
+/// [_scrollToSelectedItem] subtracts it from the scrollable to work out how
+/// much of that height is dive rows, so a value that drifted from the real
+/// one would bias every scroll-to-selected estimate by the difference,
+/// silently, and only while the notice happens to be showing.
+///
+/// Deliberately NOT enforced by wrapping the notice in a SizedBox of this
+/// height: that makes any test comparing the two a tautology, and would hide
+/// a content change by clipping it rather than failing.
+/// `dive_list_grouping_paused_test.dart` measures the real widget against it.
+const double kGroupingPausedNoticeHeight = 56;
+
+/// Trailing spacer that keeps the last row clear of the FAB.
+const double _kListBottomSpacer = 80;
+
 class DiveListContent extends ConsumerStatefulWidget {
   /// Callback when an item is selected. Used in master-detail mode.
   final void Function(String?)? onItemSelected;
@@ -133,6 +159,21 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
   DiveMergeOutcome? _lastMergeOutcome;
   final ScrollController _scrollController = ScrollController();
   String? _lastScrolledToId;
+
+  /// The sections the list rendered on its last build.
+  ///
+  /// Read only by [_scrollToSelectedItem], which has to know how much of the
+  /// scrollable height is trip-group chrome rather than dive rows, and which
+  /// dives are folded away and so occupy none of it (#1193).
+  List<DiveListSection> _lastSections = const [];
+
+  /// Whether the last build showed the grouping-paused notice, which sits
+  /// above every row and shifts them all down.
+  bool _lastShowedPausedNotice = false;
+
+  /// Guards the retry to a single attempt, so a target that stays invisible
+  /// cannot ping-pong between build and post-frame forever.
+  String? _scrollRetriedFor;
 
   /// True while a kick from the loader row is waiting for the frame to end.
   ///
@@ -253,6 +294,61 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
   /// when omitted. An explicit id lets callers (e.g. the combine flow) scroll
   /// to a freshly created row without depending on when the URL selection
   /// propagates.
+  /// Rebuilds so the target's trip opens, then retries the scroll once.
+  ///
+  /// Bounded to a single attempt per target: a dive that is still not visible
+  /// after its trip is forced open is not going to become visible by trying
+  /// again, and an unbounded retry would spin build-to-frame forever.
+  void _retryScrollOnceAfterExpand(String targetId, List<DiveSummary> dives) {
+    if (!shouldRetryScrollAfterExpanding(
+      targetId: targetId,
+      loadedDives: dives,
+      visibleDives: visibleDivesOf(_lastSections),
+      alreadyRetriedFor: _scrollRetriedFor,
+    )) {
+      return;
+    }
+
+    _scrollRetriedFor = targetId;
+    // A real expansion, not a render-time override. An override would have to
+    // stay set for the trip to remain open, which silently defeated the
+    // header's own collapse control; clearing it instead would re-hide the
+    // dive the scroll just travelled to.
+    final tripId = dives.firstWhere((d) => d.id == targetId).tripId;
+    if (tripId != null) {
+      ref.read(collapsedTripIdsProvider.notifier).expand(tripId);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _scrollToSelectedItem(targetId);
+      // That call measures inside a post-frame callback of its own, and a
+      // callback only runs when some frame is scheduled. By here the tree has
+      // settled and nothing else would schedule one, so the retry would sit
+      // registered and never fire.
+      WidgetsBinding.instance.scheduleFrame();
+    });
+  }
+
+  /// How many pinned trip headers sit above [diveId] in the current layout.
+  ///
+  /// A header before the target adds its own extent to the target's offset,
+  /// which a flat average over dive rows cannot account for.
+  int _headerCountBefore(String diveId) {
+    var headers = 0;
+    for (final section in _lastSections) {
+      if (section is TripSection) {
+        headers++;
+        if (!section.collapsed &&
+            section.entries.any((e) => e.dive.id == diveId)) {
+          return headers;
+        }
+      } else if (section.entries.any((e) => e.dive.id == diveId)) {
+        return headers;
+      }
+    }
+    return headers;
+  }
+
   void _scrollToSelectedItem([String? overrideId]) {
     final targetId = overrideId ?? widget.selectedId;
     if (targetId == null) return;
@@ -270,14 +366,49 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
           final maxScroll = _scrollController.position.maxScrollExtent;
           final viewportHeight = _scrollController.position.viewportDimension;
 
-          // Calculate actual average item height from scroll geometry
-          // Total content = viewport + max scroll extent
-          // Subtract bottom padding (80px) from total to get actual list content height
-          final totalContentHeight = maxScroll + viewportHeight - 80;
-          final avgItemHeight = totalContentHeight / dives.length;
+          // Rows are built lazily, so there is no exact offset to read; this
+          // estimates one from scroll geometry. With trip grouping the
+          // scrollable also carries chrome that is not a dive row (a pinned
+          // header per group, the paused notice, the bottom spacer), and a
+          // dive folded inside a collapsed trip occupies no height at all.
+          // Averaging raw height over every loaded dive would count that
+          // chrome as dive rows and count hidden dives as if they were
+          // visible, landing the scroll well off target (#1193).
+          final visible = visibleDivesOf(_lastSections);
+          final visibleIndex = visible.indexWhere((d) => d.id == targetId);
+          if (visibleIndex < 0 || visible.isEmpty) {
+            // Loaded, but folded inside a collapsed trip as of the build this
+            // callback is measuring. Open that trip and retry once on the far
+            // side of the rebuild. Without the retry the scroll gives up
+            // silently and the dive is left off screen, most visibly on the
+            // merge path, whose target arrives as an override and so never
+            // reaches widget.selectedId.
+            _retryScrollOnceAfterExpand(targetId, dives);
+            return;
+          }
 
-          // Target position: put item 1/3 from top of viewport for comfortable viewing
-          final targetOffset = (index * avgItemHeight) - (viewportHeight / 3);
+          final headerExtent = tripGroupHeaderExtent(context);
+          final headerCount = _lastSections.whereType<TripSection>().length;
+          final noticeHeight = _lastShowedPausedNotice
+              ? kGroupingPausedNoticeHeight
+              : 0.0;
+          final chromeHeight =
+              headerCount * headerExtent + noticeHeight + _kListBottomSpacer;
+
+          // Whatever is left is dive rows, spread over the visible ones.
+          final rowsHeight = maxScroll + viewportHeight - chromeHeight;
+          final avgItemHeight = rowsHeight <= 0
+              ? 0.0
+              : rowsHeight / visible.length;
+
+          // Headers above the target push it further down the scrollable.
+          final headersBefore = _headerCountBefore(targetId);
+
+          final targetOffset =
+              noticeHeight +
+              headersBefore * headerExtent +
+              visibleIndex * avgItemHeight -
+              (viewportHeight / 3);
           final clampedOffset = targetOffset.clamp(0.0, maxScroll);
 
           _scrollController.animateTo(
@@ -337,21 +468,22 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
   }
 
   /// Pick a date range and select every dive whose date falls inside it.
-  Future<void> _selectByDateRange(List<DiveSummary> dives) async {
+  Future<BulkActionOutcome> _selectByDateRange(List<DiveSummary> dives) async {
     final range = await showAppDateRangePicker(
       context: context,
       firstDate: DateTime(1970),
       lastDate: DateTime(2100),
     );
-    if (range == null) return;
+    if (range == null) return BulkActionOutcome.cancelled;
     final matching = dives
         .where((d) => inDateRange(d, range))
         .map((d) => d.id)
         .toList();
     _selection.selectAll([..._selectedIds, ...matching]);
+    return BulkActionOutcome.completed;
   }
 
-  Future<void> _confirmAndDelete() async {
+  Future<BulkActionOutcome> _confirmAndDelete() async {
     final count = _selectedIds.length;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -423,7 +555,9 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
           ),
         );
       }
+      return BulkActionOutcome.completed;
     }
+    return BulkActionOutcome.cancelled;
   }
 
   /// Show the combine-dives dialog for the current selection, then refresh
@@ -433,16 +567,17 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
   /// clearing, but the snackbar action is #406-complete: `persist: false` is
   /// required whenever a SnackBar has an action, otherwise it defaults to
   /// persisting until explicitly dismissed.
-  Future<void> _combineSelected() async {
+  Future<BulkActionOutcome> _combineSelected() async {
     final ids = _selectedIds.toList();
-    if (ids.length < 2) return;
+    if (ids.length < 2) return BulkActionOutcome.cancelled;
     final scaffoldMessenger = ScaffoldMessenger.of(context);
 
     final outcome = await showCombineDivesDialog(
       context: context,
       diveIds: ids,
     );
-    if (outcome == null || !mounted) return;
+    if (outcome == null) return BulkActionOutcome.cancelled;
+    if (!mounted) return BulkActionOutcome.completed;
 
     // Select the merged dive the same way a list tap does: highlight its row
     // (highlightedDiveIdProvider) AND open it in the detail pane
@@ -481,6 +616,12 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
             try {
               await ref.read(diveMergeServiceProvider).undo(toUndo.snapshot);
               _refreshAfterMerge();
+              // The originals are back and the merged dive is gone; the
+              // condition engine reads their sensor summaries.
+              scheduleSensorSummaryRefresh([
+                ...ids,
+                toUndo.mergedDive.id,
+              ], force: true);
               if (mounted) {
                 // The merged dive no longer exists; clear it from the detail
                 // pane and the row highlight if it is still selected.
@@ -526,6 +667,7 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
     // first or the row won't exist yet to scroll to.
     await ref.read(paginatedDiveListProvider.notifier).refresh();
     if (mounted) _scrollToSelectedItem(outcome.mergedDive.id);
+    return BulkActionOutcome.completed;
   }
 
   /// Invalidate the merge-derived providers other than the paginated list
@@ -541,10 +683,10 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
     _invalidateStatsAfterMerge();
   }
 
-  void _showExportDialog() {
+  Future<BulkActionOutcome> _showExportDialog() async {
     final count = _selectedIds.length;
 
-    showModalBottomSheet(
+    final format = await showModalBottomSheet<_BulkExportFormat>(
       context: context,
       builder: (sheetContext) => SafeArea(
         child: Column(
@@ -572,46 +714,35 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
               leading: const Icon(Icons.picture_as_pdf),
               title: Text(context.l10n.diveLog_bulkExport_pdf),
               subtitle: Text(context.l10n.diveLog_bulkExport_pdfDescription),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _exportSelectedAs(
-                  _BulkExportFormat.pdf,
-                  context.l10n.diveLog_bulkExport_pdf,
-                );
-              },
+              onTap: () => Navigator.pop(sheetContext, _BulkExportFormat.pdf),
             ),
             ListTile(
               leading: const Icon(Icons.table_chart),
               title: Text(context.l10n.diveLog_bulkExport_csv),
               subtitle: Text(context.l10n.diveLog_bulkExport_csvDescription),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _exportSelectedAs(
-                  _BulkExportFormat.csv,
-                  context.l10n.diveLog_bulkExport_csv,
-                );
-              },
+              onTap: () => Navigator.pop(sheetContext, _BulkExportFormat.csv),
             ),
             ListTile(
               leading: const Icon(Icons.code),
               title: Text(context.l10n.diveLog_bulkExport_uddf),
               subtitle: Text(context.l10n.diveLog_bulkExport_uddfDescription),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _exportSelectedAs(
-                  _BulkExportFormat.uddf,
-                  context.l10n.diveLog_bulkExport_uddf,
-                );
-              },
+              onTap: () => Navigator.pop(sheetContext, _BulkExportFormat.uddf),
             ),
             const SizedBox(height: 8),
           ],
         ),
       ),
     );
+
+    if (format == null || !mounted) return BulkActionOutcome.cancelled;
+    return _exportSelectedAs(format, switch (format) {
+      _BulkExportFormat.pdf => context.l10n.diveLog_bulkExport_pdf,
+      _BulkExportFormat.csv => context.l10n.diveLog_bulkExport_csv,
+      _BulkExportFormat.uddf => context.l10n.diveLog_bulkExport_uddf,
+    });
   }
 
-  Future<void> _exportSelectedAs(
+  Future<BulkActionOutcome> _exportSelectedAs(
     _BulkExportFormat format,
     String formatLabel,
   ) async {
@@ -621,7 +752,7 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
     if (format == _BulkExportFormat.pdf) {
       pdfOptions = await PdfExportDialog.show(context);
       // A null return means the diver cancelled, not that anything failed.
-      if (pdfOptions == null || !mounted) return;
+      if (pdfOptions == null || !mounted) return BulkActionOutcome.cancelled;
     }
 
     // Only UDDF carries raw dive computer bytes, so only it offers the
@@ -630,12 +761,22 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
       context,
       title: formatLabel,
       showRawDataToggle: format == _BulkExportFormat.uddf,
+      showDiveContentToggles: format == _BulkExportFormat.uddf,
+      showCsvUnitsToggle: format == _BulkExportFormat.csv,
+      initialCsvUnitMode: ref.read(csvUnitModeProvider),
     );
-    if (choice == null || !mounted) return;
+    if (choice == null || !mounted) return BulkActionOutcome.cancelled;
+    if (format == _BulkExportFormat.csv) {
+      unawaited(ref.read(csvUnitModeProvider.notifier).set(choice.csvUnitMode));
+    }
+    final csvUnits = CsvExportUnits.forMode(
+      choice.csvUnitMode,
+      ref.read(settingsProvider),
+    );
     final destination = choice.destination;
-    final uddfOptions = UddfExportOptions(
-      includeRawData: choice.includeRawData,
-    );
+    // Resolved while the context is known to be mounted; used after awaits.
+    final csvSaveTitle = context.l10n.settings_export_saveDivesCsvDialogTitle;
+    final uddfOptions = choice.options;
 
     // Saving opens the native save panel, which must not be raised while a
     // modal route is up - so that path drops the progress dialog first.
@@ -667,9 +808,11 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
       var selectedDives = await repository.getDivesByIds(_selectedIds.toList());
 
       // getDivesByIds hydrates profiles but not the buddy junction, which only
-      // getAllDives loads. #1017 asks for buddies in the detailed logbook, so
-      // attach them here rather than shipping an export that omits the team.
-      if (format == _BulkExportFormat.pdf) {
+      // getAllDives loads. The PDF logbook (#1017) and the CSV Buddy and Dive
+      // Master columns (#1861) both read it, so attach it here, in one batched
+      // query, rather than shipping an export that omits the team. UDDF loads
+      // its participants separately, through its extras fetch.
+      if (format == _BulkExportFormat.pdf || format == _BulkExportFormat.csv) {
         final buddiesByDive = await ref
             .read(buddyRepositoryProvider)
             .getBuddiesForDives(selectedDives.map((d) => d.id).toList());
@@ -715,10 +858,15 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
           // Keep the export going without the personalization.
         }
       }
-      if (!mounted) return;
+      // Awaited, not read from the list's snapshot: an export started while
+      // the types load would otherwise write every name rebuilt from its id.
+      final diveTypesById = format == _BulkExportFormat.uddf
+          ? const <String, DiveTypeEntity>{}
+          : await diveTypesByIdOrEmpty(ref.read(diveTypesByIdProvider.future));
+      if (!mounted) return BulkActionOutcome.cancelled;
 
       if (!keepDialogForDelivery) {
-        if (!mounted) return;
+        if (!mounted) return BulkActionOutcome.cancelled;
         Navigator.of(context, rootNavigator: true).pop();
         dialogVisible = false;
       }
@@ -735,6 +883,7 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
                   certifications: certifications,
                   diver: diver,
                   diverPhoto: diverPhoto,
+                  diveTypesById: diveTypesById,
                 )
               : await exportService.saveDivesToPdfFile(
                   selectedDives,
@@ -744,11 +893,21 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
                   certifications: certifications,
                   diver: diver,
                   diverPhoto: diverPhoto,
+                  diveTypesById: diveTypesById,
                 ),
         _BulkExportFormat.csv =>
           sharing
-              ? await exportService.exportDivesToCsv(selectedDives)
-              : await exportService.saveDivesCsvToFile(selectedDives),
+              ? await exportService.exportDivesToCsv(
+                  selectedDives,
+                  units: csvUnits,
+                  diveTypesById: diveTypesById,
+                )
+              : await exportService.saveDivesCsvToFile(
+                  selectedDives,
+                  dialogTitle: csvSaveTitle,
+                  units: csvUnits,
+                  diveTypesById: diveTypesById,
+                ),
         _BulkExportFormat.uddf =>
           sharing
               ? await exportService.exportDivesToUddf(
@@ -756,6 +915,10 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
                   sites: sites,
                   options: uddfOptions,
                   dataSources: await ref.read(uddfSourceFetchProvider)(
+                    selectedDives.map((d) => d.id).toList(growable: false),
+                    uddfOptions,
+                  ),
+                  extras: await ref.read(uddfDivesExtrasFetchProvider)(
                     selectedDives.map((d) => d.id).toList(growable: false),
                     uddfOptions,
                   ),
@@ -768,17 +931,20 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
                     selectedDives.map((d) => d.id).toList(growable: false),
                     uddfOptions,
                   ),
+                  extras: await ref.read(uddfDivesExtrasFetchProvider)(
+                    selectedDives.map((d) => d.id).toList(growable: false),
+                    uddfOptions,
+                  ),
                 ),
       };
 
-      if (!mounted) return;
+      if (!mounted) return BulkActionOutcome.completed;
       if (dialogVisible) {
         Navigator.of(context, rootNavigator: true).pop();
         dialogVisible = false;
       }
       // A null path means the save panel was dismissed - not a failure.
-      if (path == null) return;
-      _exitSelectionMode();
+      if (path == null) return BulkActionOutcome.cancelled;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -787,6 +953,7 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
           backgroundColor: Colors.green,
         ),
       );
+      return BulkActionOutcome.completed;
     } catch (e) {
       if (mounted) {
         if (dialogVisible) {
@@ -799,23 +966,35 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
           ),
         );
       }
+      return BulkActionOutcome.failed;
     }
   }
 
-  /// Open the bulk-edit form for the selected dives, then exit selection mode.
-  Future<void> _openBulkEdit() async {
+  /// Open the bulk edit form for the selected dives.
+  ///
+  /// Reports completed either way. The form leaves itself with
+  /// `context.go('/dives')` rather than popping a result, so a saved edit and
+  /// a cancelled one both complete the pushed route's future with null and are
+  /// indistinguishable from here. Teaching it to pop a result would have to
+  /// keep the `go` fallback for the deep-linked entry, and popping inside the
+  /// shell navigator is what blanks a master-detail pane -- so this keeps the
+  /// behavior it has always had rather than risking that for the cancel case.
+  Future<BulkActionOutcome> _openBulkEdit() async {
     final ids = _selectedIds.toList();
-    if (ids.isEmpty) return;
+    if (ids.isEmpty) return BulkActionOutcome.cancelled;
     await context.pushNamed('bulkEditDives', extra: ids);
-    if (mounted) _exitSelectionMode();
+    return BulkActionOutcome.completed;
   }
 
-  /// Open the 3D comparison view for the selected dives, then exit selection.
-  Future<void> _compareIn3d() async {
+  /// Open the 3D comparison view for the selected dives.
+  ///
+  /// Opening the comparison IS the action, so it completes as soon as the
+  /// view has been shown; there is nothing to cancel out of.
+  Future<BulkActionOutcome> _compareIn3d() async {
     final ids = _selectedIds.toList();
-    if (ids.length < 2) return;
+    if (ids.length < 2) return BulkActionOutcome.cancelled;
     await context.pushNamed('compareDives3d', extra: ids);
-    if (mounted) _exitSelectionMode();
+    return BulkActionOutcome.completed;
   }
 
   /// One tap policy for every dive row, in every view mode.
@@ -1039,6 +1218,16 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
               context.push('/dives/match-sites');
             } else if (value == 'data_quality') {
               context.push('/dives/quality');
+            } else if (value == 'group_trips') {
+              final next = !ref.read(diveListGroupTripsProvider);
+              ref.read(diveListGroupTripsProvider.notifier).state = next;
+              ref.read(settingsProvider.notifier).setGroupTripsInDiveList(next);
+            } else if (value == 'expand_all_trips') {
+              ref.read(collapsedTripIdsProvider.notifier).expandAll();
+            } else if (value == 'collapse_all_trips') {
+              ref
+                  .read(collapsedTripIdsProvider.notifier)
+                  .collapseAll(_visibleTripIds());
             } else if (value.startsWith('view_')) {
               final mode = ListViewMode.fromName(
                 value.replaceFirst('view_', ''),
@@ -1058,6 +1247,36 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
                   ListViewMode.table,
                 ],
               ),
+              const PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'group_trips',
+                child: _groupingMenuRow(
+                  context,
+                  icon: Icons.card_travel,
+                  label: context.l10n.diveLog_listPage_menuGroupTrips,
+                  // The active state reads as a tinted icon and label, matching the
+                  // view-mode entries directly above rather than a checkbox.
+                  isActive: ref.watch(diveListGroupTripsProvider),
+                ),
+              ),
+              if (ref.watch(diveListGroupingEnabledProvider)) ...[
+                PopupMenuItem(
+                  value: 'expand_all_trips',
+                  child: _groupingMenuRow(
+                    context,
+                    icon: Icons.unfold_more,
+                    label: context.l10n.diveLog_listPage_menuExpandAllTrips,
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'collapse_all_trips',
+                  child: _groupingMenuRow(
+                    context,
+                    icon: Icons.unfold_less,
+                    label: context.l10n.diveLog_listPage_menuCollapseAllTrips,
+                  ),
+                ),
+              ],
               const PopupMenuDivider(),
               PopupMenuItem(
                 value: 'advanced_search',
@@ -1207,6 +1426,18 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
                 context.push('/dives/match-sites');
               } else if (value == 'data_quality') {
                 context.push('/dives/quality');
+              } else if (value == 'group_trips') {
+                final next = !ref.read(diveListGroupTripsProvider);
+                ref.read(diveListGroupTripsProvider.notifier).state = next;
+                ref
+                    .read(settingsProvider.notifier)
+                    .setGroupTripsInDiveList(next);
+              } else if (value == 'expand_all_trips') {
+                ref.read(collapsedTripIdsProvider.notifier).expandAll();
+              } else if (value == 'collapse_all_trips') {
+                ref
+                    .read(collapsedTripIdsProvider.notifier)
+                    .collapseAll(_visibleTripIds());
               } else if (value.startsWith('view_')) {
                 final mode = ListViewMode.fromName(
                   value.replaceFirst('view_', ''),
@@ -1226,6 +1457,36 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
                     ListViewMode.table,
                   ],
                 ),
+                const PopupMenuDivider(),
+                PopupMenuItem(
+                  value: 'group_trips',
+                  child: _groupingMenuRow(
+                    context,
+                    icon: Icons.card_travel,
+                    label: context.l10n.diveLog_listPage_menuGroupTrips,
+                    // The active state reads as a tinted icon and label, matching the
+                    // view-mode entries directly above rather than a checkbox.
+                    isActive: ref.watch(diveListGroupTripsProvider),
+                  ),
+                ),
+                if (ref.watch(diveListGroupingEnabledProvider)) ...[
+                  PopupMenuItem(
+                    value: 'expand_all_trips',
+                    child: _groupingMenuRow(
+                      context,
+                      icon: Icons.unfold_more,
+                      label: context.l10n.diveLog_listPage_menuExpandAllTrips,
+                    ),
+                  ),
+                  PopupMenuItem(
+                    value: 'collapse_all_trips',
+                    child: _groupingMenuRow(
+                      context,
+                      icon: Icons.unfold_less,
+                      label: context.l10n.diveLog_listPage_menuCollapseAllTrips,
+                    ),
+                  ),
+                ],
                 const PopupMenuDivider(),
                 PopupMenuItem(
                   value: 'advanced_search',
@@ -1331,6 +1592,9 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
       ),
       BulkAction(
         id: 'date_range',
+        // Builds the selection instead of acting on it, so it is the one
+        // action that must leave the mode standing.
+        exitsSelectionOnComplete: false,
         icon: Icons.date_range,
         label: context.l10n.diveLog_selection_tooltip_selectDateRange,
         // Operates on the visible list rather than the selection, so it is
@@ -1422,6 +1686,9 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
   /// Build the DiveTableView widget from the full-Dive provider.
   Widget _buildTableView(BuildContext context, DiveFilterState filter) {
     final divesAsync = ref.watch(allDivesForTableProvider);
+    // Built once above the table, as for the list tiles, so the Dive Type
+    // column shows the diver's names and localized built-ins.
+    final diveTypeLabelResolver = watchDiveTypeLabelResolver(ref, context.l10n);
 
     return divesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -1436,6 +1703,7 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
             Expanded(
               child: DiveTableView(
                 dives: dives,
+                diveTypeLabelResolver: diveTypeLabelResolver,
                 onDiveTapDown: (id) {
                   // Rows carry a double-tap, so onDiveTap only resolves after
                   // the double-tap timer -- long after this fires. A modified
@@ -1531,10 +1799,85 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
       fullDiveLookup = {};
     }
 
-    // +1 for loading indicator when more pages are available
-    final itemCount =
-        dives.length +
-        (paginatedState.hasMore || paginatedState.isLoadingMore ? 1 : 0);
+    // Trip grouping (#1193). Disabled unless the toggle is on, the sort is
+    // chronological and the view mode is a card mode; see
+    // [diveListGroupingEnabledProvider].
+    final groupingEnabled = ref.watch(diveListGroupingEnabledProvider);
+    final collapsedTripIds = ref.watch(collapsedTripIdsProvider);
+    final tripTotals =
+        ref.watch(tripDiveCountsProvider).whenOrNull(data: (m) => m) ??
+        const <String, int>{};
+
+    // Never fold away the dive the diver is looking at: the row open in the
+    // detail pane, or the highlighted one, keeps its trip expanded.
+    final openDiveId =
+        widget.selectedId ?? ref.watch(highlightedDiveIdProvider);
+    String? openDiveTripId;
+    if (openDiveId != null) {
+      for (final dive in dives) {
+        if (dive.id == openDiveId) {
+          openDiveTripId = dive.tripId;
+          break;
+        }
+      }
+    }
+
+    final sections = buildDiveListSections(
+      dives: dives,
+      groupingEnabled: groupingEnabled,
+      collapsedTripIds: collapsedTripIds,
+      tripTotals: tripTotals,
+      forceExpandedTripId: openDiveTripId,
+    );
+    _lastSections = sections;
+    _lastShowedPausedNotice = ref.watch(diveListGroupingPausedBySortProvider);
+
+    // Taps, ranges and prev/next walk what the diver can actually see, so a
+    // shift-range never sweeps up rows folded inside a collapsed trip.
+    final visibleDives = visibleDivesOf(sections);
+
+    // One closure over every per-build value, shared by all the sliver
+    // builders below. Hoisting these to fields would risk a row reading a
+    // stale one; a closure cannot.
+    Widget rowFor(DiveListEntry entry) {
+      final dive = entry.dive;
+      final isSelected = _selectedIds.contains(dive.id);
+      final isMasterSelected = widget.selectedId == dive.id;
+      final isHighlighted = ref.watch(highlightedDiveIdProvider) == dive.id;
+      // Shared renderer: honours the active view mode and card config, and
+      // keeps the home Recent dives list in sync (#506). Nothing here varies
+      // with grouping, which is what keeps a grouped card exactly as wide as
+      // a loose one (#1193).
+      return DiveListItem(
+        summary: dive,
+        diveTypeLabelResolver: diveTypeLabelResolver,
+        diveTypeShortLabelResolver: diveTypeShortLabelResolver,
+        diveTypeListVisibilityPredicate: diveTypeListVisibilityPredicate,
+        fullDive: fullDiveLookup[dive.id],
+        // The flat index, not a position within the section: the badge
+        // numbers dives by their place in the whole list.
+        diveNumber: dive.diveNumber ?? entry.flatIndex + 1,
+        colorValue: getCardColorValue(dive, colorAttribute),
+        minValueInList: minValue,
+        maxValueInList: maxValue,
+        gradientStartColor: gradientColors.start,
+        gradientEndColor: gradientColors.end,
+        isSelectionMode: _isSelectionMode,
+        isChecked: isSelected,
+        isHighlighted: isMasterSelected || isHighlighted,
+        onTap: () => _handleRowTap(dive.id, visibleDives),
+      );
+    }
+
+    Widget sliverForEntries(List<DiveListEntry> entries) {
+      return SliverList.builder(
+        itemCount: entries.length,
+        itemBuilder: (context, index) => rowFor(entries[index]),
+      );
+    }
+
+    final showTrailingRow =
+        paginatedState.hasMore || paginatedState.isLoadingMore;
 
     return RefreshIndicator(
       onRefresh: () => ref.read(paginatedDiveListProvider.notifier).refresh(),
@@ -1542,51 +1885,209 @@ class _DiveListContentState extends ConsumerState<DiveListContent> {
         children: [
           if (hasActiveFilters) _buildActiveFiltersBar(context),
           Expanded(
-            child: ListView.builder(
+            child: CustomScrollView(
               controller: _scrollController,
-              padding: const EdgeInsets.only(bottom: 80),
-              itemCount: itemCount,
-              itemBuilder: (context, index) {
-                // Loading indicator at the end
-                if (index >= dives.length) {
-                  if (paginatedState.loadMoreFailed) {
-                    return _buildLoadMoreFailedRow(context);
-                  }
-                  _loadNextPageIfStranded(paginatedState);
-                  return const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Center(child: CircularProgressIndicator()),
-                  );
-                }
+              slivers: [
+                if (ref.watch(diveListGroupingPausedBySortProvider))
+                  SliverToBoxAdapter(
+                    child: _buildGroupingPausedNotice(context),
+                  ),
+                for (final section in sections)
+                  if (section is TripSection)
+                    _buildTripSectionSliver(context, section, sliverForEntries)
+                  else
+                    sliverForEntries(section.entries),
+                if (showTrailingRow)
+                  SliverToBoxAdapter(
+                    child: _buildTrailingRow(context, paginatedState),
+                  ),
+                // Clears the FAB, matching the old list's bottom padding.
+                const SliverToBoxAdapter(
+                  child: SizedBox(height: _kListBottomSpacer),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-                final dive = dives[index];
-                final isSelected = _selectedIds.contains(dive.id);
-                final isMasterSelected = widget.selectedId == dive.id;
-                final isHighlighted =
-                    ref.watch(highlightedDiveIdProvider) == dive.id;
-                // Shared renderer: honours the active view mode and card
-                // config, and keeps the home Recent dives list in sync (#506).
-                return DiveListItem(
-                  summary: dive,
-                  diveTypeLabelResolver: diveTypeLabelResolver,
-                  diveTypeShortLabelResolver: diveTypeShortLabelResolver,
-                  diveTypeListVisibilityPredicate:
-                      diveTypeListVisibilityPredicate,
-                  fullDive: fullDiveLookup[dive.id],
-                  diveNumber: dive.diveNumber ?? index + 1,
-                  colorValue: getCardColorValue(dive, colorAttribute),
-                  minValueInList: minValue,
-                  maxValueInList: maxValue,
-                  gradientStartColor: gradientColors.start,
-                  gradientEndColor: gradientColors.end,
-                  isSelectionMode: _isSelectionMode,
-                  isChecked: isSelected,
-                  isHighlighted: isMasterSelected || isHighlighted,
-                  onTap: () => _handleRowTap(dive.id, dives),
-                );
+  /// One row of the trip-grouping menu entries.
+  ///
+  /// Mirrors [ListViewModeToggle.menuItems]: a 20px leading icon, a 12px gap,
+  /// then the label, with the active entry tinted to the primary colour
+  /// rather than marked with a checkbox. Keeping the two identical is what
+  /// stops the grouping entries reading as a different kind of control from
+  /// the view modes they sit under.
+  Widget _groupingMenuRow(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    bool isActive = false,
+  }) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: isActive ? primary : null),
+        const SizedBox(width: 12),
+        // Flexible, unlike the shorter entries above: an icon plus a label
+        // like "Collapse all trips" already overruns the popup's default
+        // width, and the longer locales are longer still.
+        Flexible(
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: isActive
+                ? TextStyle(color: primary, fontWeight: FontWeight.w600)
+                : null,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Trip ids present in the loaded list.
+  ///
+  /// Collapse all folds what is on screen, not every trip the diver has ever
+  /// logged: folding away trips they cannot see would be invisible work with
+  /// a surprising effect later.
+  List<String> _visibleTripIds() {
+    final dives =
+        ref.read(paginatedDiveListProvider).value?.dives ??
+        const <DiveSummary>[];
+    return dives.map((d) => d.tripId).whereType<String>().toSet().toList();
+  }
+
+  /// Explains why the trip headers are missing while the toggle is on.
+  ///
+  /// Not folded into the active-filters bar: that bar only exists when a
+  /// filter is active, and a paused grouping is not a filter. The toggle stays
+  /// on and stays checked, so nothing the diver set reverts behind their back
+  /// (#1193).
+  Widget _buildGroupingPausedNotice(BuildContext context) {
+    final theme = Theme.of(context);
+    final sort = ref.watch(diveSortProvider);
+    return Padding(
+      key: const ValueKey('grouping_paused_notice'),
+      padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+      child: Row(
+        children: [
+          Icon(
+            Icons.info_outline,
+            size: 16,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              context.l10n.diveLog_listPage_groupingPausedBySort(
+                sort.field.localizedName(context.l10n),
+              ),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              ref.read(diveSortProvider.notifier).state = const SortState(
+                field: DiveSortField.date,
+                direction: SortDirection.descending,
+              );
+            },
+            child: Text(context.l10n.diveLog_listPage_groupingPausedAction),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The trailing loader or retry row.
+  ///
+  /// Deliberately a built widget rather than a scroll-offset check: when the
+  /// list shrinks under a position already at the bottom, or when collapsed
+  /// trips leave a freshly loaded page almost entirely invisible, Flutter
+  /// clamps the offset during layout without notifying scroll listeners.
+  /// Building this row is the only signal that survives (#1610).
+  Widget _buildTrailingRow(
+    BuildContext context,
+    PaginatedDiveListState paginatedState,
+  ) {
+    if (paginatedState.loadMoreFailed) {
+      return _buildLoadMoreFailedRow(context);
+    }
+    _loadNextPageIfStranded(paginatedState);
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 16),
+      child: Center(child: CircularProgressIndicator()),
+    );
+  }
+
+  /// One trip: a faint full-bleed band behind a pinned header and its dives.
+  ///
+  /// The band is a [DecoratedSliver] rather than a widget wrapping the rows,
+  /// for two reasons. It keeps the rows lazily built, and it makes the grouped
+  /// region WIDER than the cards it contains rather than narrower, which is
+  /// the whole constraint of #1193. Nothing in here may touch the cards' own
+  /// margins.
+  Widget _buildTripSectionSliver(
+    BuildContext context,
+    TripSection section,
+    Widget Function(List<DiveListEntry>) sliverForEntries,
+  ) {
+    final scheme = Theme.of(context).colorScheme;
+    final groupIds = section.entries.map((e) => e.dive.id).toList();
+    final checkedInGroup = groupIds.where(_selectedIds.contains).length;
+    final bool? groupChecked = checkedInGroup == 0
+        ? false
+        : (checkedInGroup == groupIds.length ? true : null);
+
+    return DecoratedSliver(
+      decoration: BoxDecoration(
+        // The band is the only thing besides the header marking the group,
+        // now that the side rail was dropped, so it has to be legible rather
+        // than merely present.
+        //
+        // Checked on a simulator rather than guessed at. The dive cards are
+        // near-white and nearly fill the band's width, so only the margins
+        // and the gaps between cards show the tint at all: a faint alpha
+        // reads as nothing, and raising it a little only darkens thin
+        // slivers. It takes close to the full container colour for the group
+        // to read as one block. 0.14 and 0.38 were both too weak on device.
+        color: scheme.secondaryContainer.withValues(alpha: 0.9),
+        border: Border(
+          top: BorderSide(color: scheme.secondary, width: 2),
+          bottom: BorderSide(color: scheme.secondary, width: 2),
+        ),
+      ),
+      sliver: SliverMainAxisGroup(
+        slivers: [
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: TripGroupHeaderDelegate(
+              section: section,
+              extent: tripGroupHeaderExtent(context),
+              onToggle: () => ref
+                  .read(collapsedTripIdsProvider.notifier)
+                  .toggle(section.tripId),
+              onOpenTrip: () => context.push('/trips/${section.tripId}'),
+              isSelectionMode: _isSelectionMode,
+              groupChecked: groupChecked,
+              onGroupCheckedChanged: (_) {
+                // Loaded dives only, matching the existing select-all: the
+                // list can only act on rows it holds.
+                if (checkedInGroup == groupIds.length) {
+                  _selection.replaceChecked(
+                    _selectedIds.where((id) => !groupIds.contains(id)).toList(),
+                  );
+                } else {
+                  _selection.selectAll([..._selectedIds, ...groupIds]);
+                }
               },
             ),
           ),
+          if (!section.collapsed) sliverForEntries(section.entries),
         ],
       ),
     );

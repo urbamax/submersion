@@ -22,6 +22,8 @@ import 'package:submersion/features/dive_sites/presentation/providers/site_provi
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
 import 'package:submersion/features/site_scape/presentation/site_scape_view.dart';
 import 'package:submersion/features/site_scape/presentation/site_terrain_pane.dart';
+import 'package:submersion/features/site_types/domain/entities/site_type_entity.dart';
+import 'package:submersion/features/tags/domain/entities/tag.dart';
 import 'package:submersion/l10n/arb/app_localizations.dart';
 
 import '../../../../helpers/mock_providers.dart';
@@ -726,7 +728,9 @@ void main() {
       expect(find.textContaining('0'), findsWidgets);
     });
 
-    testWidgets('dive count section shows singular for 1 dive', (tester) async {
+    testWidgets('the dives card offers a way through to that one dive', (
+      tester,
+    ) async {
       _setMobileTestSurfaceSize(tester);
       final overrides = await getBaseOverrides();
       await tester.pumpWidget(
@@ -744,8 +748,13 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      // Should have a chevron_right when diveCount > 0.
-      expect(find.byIcon(Icons.chevron_right), findsWidgets);
+      // The whole-card tap target became a labelled footer link when the
+      // count card merged into the statistics card.
+      expect(find.text('View 1 dive'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('siteViewAllDivesButton')),
+        findsOneWidget,
+      );
     });
 
     testWidgets('rating section shows stars', (tester) async {
@@ -967,7 +976,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Embedded Site'), findsWidgets);
-      expect(find.byIcon(Icons.location_on), findsWidgets);
+      // The header states the name and the location string in text. The
+      // decorative location avatar that used to sit beside them is gone: it
+      // repeated what the two lines already said.
+      expect(find.textContaining('Cozumel'), findsWidgets);
       expect(find.byIcon(Icons.more_vert), findsOneWidget);
       expect(find.byIcon(Icons.edit), findsWidgets);
     });
@@ -1148,6 +1160,89 @@ void main() {
       expect(find.text('Cebu City'), findsWidgets);
       expect(find.text('Malapascua'), findsWidgets);
       expect(find.text('Visayan Sea'), findsOneWidget);
+    });
+
+    group('site types and tags (issue #1765)', () {
+      const site = DiveSite(id: 'typed', name: 'Quarry wreck');
+      final now = DateTime(2026);
+
+      Future<void> pumpTyped(
+        WidgetTester tester, {
+        List<SiteTypeEntity> types = const [],
+        List<Tag> tags = const [],
+      }) async {
+        _setMobileTestSurfaceSize(tester);
+        final overrides = await getBaseOverrides();
+        await tester.pumpWidget(
+          ProviderScope(
+            overrides: [
+              ...overrides,
+              siteProvider(site.id).overrideWith((ref) async => site),
+              siteDiveCountProvider(site.id).overrideWith((ref) async => 0),
+              siteTypesForSiteProvider(
+                site.id,
+              ).overrideWith((ref) async => types),
+              tagsForSiteProvider(site.id).overrideWith((ref) async => tags),
+            ],
+            child: MaterialApp(
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: SiteDetailPage(siteId: site.id, embedded: true),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      SiteTypeEntity builtIn(String id, String name) => SiteTypeEntity(
+        id: id,
+        name: name,
+        isBuiltIn: true,
+        createdAt: now,
+        updatedAt: now,
+      );
+
+      testWidgets('the Location card lists the types in one row', (
+        tester,
+      ) async {
+        await pumpTyped(
+          tester,
+          types: [builtIn('quarry', 'Quarry'), builtIn('wreck', 'Wreck')],
+        );
+
+        expect(find.text('Site Types'), findsOneWidget);
+        expect(find.text('Quarry, Wreck'), findsOneWidget);
+      });
+
+      testWidgets('a site without types reads Not set there', (tester) async {
+        await pumpTyped(tester);
+
+        expect(find.text('Site Types'), findsOneWidget);
+        // Every empty Location row reads Not set; the types row is one more.
+        expect(find.text('Not set'), findsWidgets);
+        expect(find.text('Tags'), findsNothing, reason: 'no tags, no card');
+      });
+
+      testWidgets('tags get their own card', (tester) async {
+        await pumpTyped(
+          tester,
+          tags: [
+            Tag(
+              id: 't1',
+              name: 'To try',
+              createdAt: now,
+              updatedAt: now,
+              appliesToSites: true,
+            ),
+          ],
+        );
+
+        await tester.scrollUntilVisible(find.text('To try'), 200);
+        expect(find.text('Tags'), findsOneWidget);
+        expect(find.widgetWithText(ActionChip, 'To try'), findsOneWidget);
+      });
     });
   });
 

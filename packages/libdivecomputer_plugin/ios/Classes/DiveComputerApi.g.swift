@@ -301,6 +301,11 @@ struct GasMix {
   var index: Int64
   var o2Percent: Double
   var hePercent: Double
+  /// Gas usage from libdivecomputer's `dc_usage_t` (1=oxygen, 2=diluent,
+  /// 3=sidemount); null when the computer reported no usage (DC_USAGE_NONE).
+  /// Set on the gas mix itself, so it is available even when the mix has no
+  /// tank/transmitter record.
+  var usage: Int64? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -308,11 +313,13 @@ struct GasMix {
     let index = pigeonVar_list[0] as! Int64
     let o2Percent = pigeonVar_list[1] as! Double
     let hePercent = pigeonVar_list[2] as! Double
+    let usage: Int64? = nilOrValue(pigeonVar_list[3])
 
     return GasMix(
       index: index,
       o2Percent: o2Percent,
-      hePercent: hePercent
+      hePercent: hePercent,
+      usage: usage
     )
   }
   func toList() -> [Any?] {
@@ -320,6 +327,7 @@ struct GasMix {
       index,
       o2Percent,
       hePercent,
+      usage,
     ]
   }
 }
@@ -677,7 +685,7 @@ protocol DiveComputerHostApi {
   func getDeviceDescriptors(completion: @escaping (Result<[DeviceDescriptor], Error>) -> Void)
   func startDiscovery(transport: TransportType, completion: @escaping (Result<Void, Error>) -> Void)
   func stopDiscovery() throws
-  func startDownload(device: DiscoveredDevice, fingerprint: String?, completion: @escaping (Result<Void, Error>) -> Void)
+  func startDownload(device: DiscoveredDevice, fingerprint: String?, syncClock: Bool, completion: @escaping (Result<Void, Error>) -> Void)
   func cancelDownload() throws
   func submitPinCode(pinCode: String) throws
   func getLibdivecomputerVersion() throws -> String
@@ -741,7 +749,8 @@ class DiveComputerHostApiSetup {
         let args = message as! [Any?]
         let deviceArg = args[0] as! DiscoveredDevice
         let fingerprintArg: String? = nilOrValue(args[1])
-        api.startDownload(device: deviceArg, fingerprint: fingerprintArg) { result in
+        let syncClockArg = args[2] as! Bool
+        api.startDownload(device: deviceArg, fingerprint: fingerprintArg, syncClock: syncClockArg) { result in
           switch result {
           case .success:
             reply(wrapResult(nil))
@@ -822,7 +831,7 @@ protocol DiveComputerFlutterApiProtocol {
   func onDiscoveryComplete(completion: @escaping (Result<Void, PigeonError>) -> Void)
   func onDownloadProgress(progress progressArg: DownloadProgress, completion: @escaping (Result<Void, PigeonError>) -> Void)
   func onDiveDownloaded(dive diveArg: ParsedDive, completion: @escaping (Result<Void, PigeonError>) -> Void)
-  func onDownloadComplete(totalDives totalDivesArg: Int64, serialNumber serialNumberArg: String?, firmwareVersion firmwareVersionArg: String?, completion: @escaping (Result<Void, PigeonError>) -> Void)
+  func onDownloadComplete(totalDives totalDivesArg: Int64, serialNumber serialNumberArg: String?, firmwareVersion firmwareVersionArg: String?, clockSyncStatus clockSyncStatusArg: String?, completion: @escaping (Result<Void, PigeonError>) -> Void)
   func onError(error errorArg: DiveComputerError, completion: @escaping (Result<Void, PigeonError>) -> Void)
   func onPinCodeRequired(deviceAddress deviceAddressArg: String, completion: @escaping (Result<Void, PigeonError>) -> Void)
   func onLogEvent(category categoryArg: String, level levelArg: String, message messageArg: String, completion: @escaping (Result<Void, PigeonError>) -> Void)
@@ -909,10 +918,10 @@ class DiveComputerFlutterApi: DiveComputerFlutterApiProtocol {
       }
     }
   }
-  func onDownloadComplete(totalDives totalDivesArg: Int64, serialNumber serialNumberArg: String?, firmwareVersion firmwareVersionArg: String?, completion: @escaping (Result<Void, PigeonError>) -> Void) {
+  func onDownloadComplete(totalDives totalDivesArg: Int64, serialNumber serialNumberArg: String?, firmwareVersion firmwareVersionArg: String?, clockSyncStatus clockSyncStatusArg: String?, completion: @escaping (Result<Void, PigeonError>) -> Void) {
     let channelName: String = "dev.flutter.pigeon.libdivecomputer_plugin.DiveComputerFlutterApi.onDownloadComplete\(messageChannelSuffix)"
     let channel = FlutterBasicMessageChannel(name: channelName, binaryMessenger: binaryMessenger, codec: codec)
-    channel.sendMessage([totalDivesArg, serialNumberArg, firmwareVersionArg] as [Any?]) { response in
+    channel.sendMessage([totalDivesArg, serialNumberArg, firmwareVersionArg, clockSyncStatusArg] as [Any?]) { response in
       guard let listResponse = response as? [Any?] else {
         completion(.failure(createConnectionError(withChannelName: channelName)))
         return

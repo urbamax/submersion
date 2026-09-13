@@ -6,23 +6,27 @@ import 'package:go_router/go_router.dart';
 
 import 'package:submersion/core/utils/number_input.dart';
 import 'package:submersion/core/utils/unit_formatter.dart';
+import 'package:submersion/features/data_quality/data/services/diver_data_query.dart';
 import 'package:submersion/features/data_quality/data/services/quality_repair_executor.dart';
 import 'package:submersion/features/data_quality/data/services/quality_scan_service.dart';
 import 'package:submersion/features/data_quality/domain/detectors/quality_detector_registry.dart';
+import 'package:submersion/features/data_quality/domain/entities/diver_data_summary.dart';
 import 'package:submersion/features/data_quality/domain/entities/quality_finding.dart';
 import 'package:submersion/features/data_quality/domain/repairs/quality_repair_action.dart';
 import 'package:submersion/features/data_quality/data/services/profile_repair_service.dart';
 import 'package:submersion/features/data_quality/presentation/providers/data_quality_providers.dart';
 import 'package:submersion/features/data_quality/presentation/providers/quality_inbox_providers.dart';
+import 'package:submersion/features/data_quality/presentation/widgets/delete_duplicate_dialog.dart';
 import 'package:submersion/features/data_quality/presentation/widgets/dive_identity_label.dart';
 import 'package:submersion/features/data_quality/presentation/widgets/quality_finding_card.dart';
 import 'package:submersion/features/data_quality/presentation/widgets/quality_finding_message.dart';
 import 'package:submersion/features/data_quality/presentation/widgets/quality_unit_formatters.dart';
 import 'package:submersion/features/dive_log/presentation/providers/dive_providers.dart';
+import 'package:submersion/features/dive_log/presentation/widgets/pickers/reassign_tank_picker.dart';
 import 'package:submersion/features/dive_log/presentation/widgets/combine_dives_dialog.dart';
-import 'package:submersion/features/dive_log/presentation/widgets/run_dive_consolidation.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
 import 'package:submersion/l10n/l10n_extension.dart';
+import 'package:submersion/features/equipment/data/services/sensor_summary_scheduler.dart';
 
 QualityUnitFormatters buildQualityUnitFormatters(WidgetRef ref) =>
     qualityUnitFormattersFor(UnitFormatter(ref.watch(settingsProvider)));
@@ -57,6 +61,16 @@ class DataQualityInboxPage extends ConsumerStatefulWidget {
 }
 
 class _DataQualityInboxPageState extends ConsumerState<DataQualityInboxPage> {
+  /// Material's own SnackBar default, restated because the framework keeps
+  /// the constant private.
+  static const Duration _defaultUndoWindow = Duration(seconds: 4);
+
+  /// The window a repair that deletes a dive gets instead. Undo is the only
+  /// way back from it, and a diver working through a batch of findings has
+  /// dismissed the snackbar and moved on well before four seconds are up
+  /// (#1729).
+  static const Duration _destructiveUndoWindow = Duration(seconds: 10);
+
   ({int done, int total})? _scanProgress;
   bool _cancelRequested = false;
 
@@ -94,17 +108,28 @@ class _DataQualityInboxPageState extends ConsumerState<DataQualityInboxPage> {
     }
   }
 
-  Future<void> _runAction(QualityFinding f, QualityRepairAction action) async {
+  /// [identityOf] names a dive the way the page's headers do; it comes from
+  /// build, where the identity lookup is already watched, so a confirmation
+  /// can name both dives of a pair without a second read.
+  Future<void> _runAction(
+    QualityFinding f,
+    QualityRepairAction action, {
+    required DiveIdentityLabel? Function(String? diveId) identityOf,
+  }) async {
     final executor = QualityRepairExecutor();
     final l10n = context.l10n;
     final messenger = ScaffoldMessenger.of(context);
 
-    Future<void> withUndo(Future<RepairResult> Function() run) async {
+    Future<void> withUndo(
+      Future<RepairResult> Function() run, {
+      Duration undoWindow = _defaultUndoWindow,
+    }) async {
       try {
         final result = await run();
         final undo = result.undo;
         messenger.showSnackBar(
           SnackBar(
+            duration: undoWindow,
             content: Text(
               result.changed
                   ? l10n.dataQuality_repair_applied
@@ -143,16 +168,50 @@ class _DataQualityInboxPageState extends ConsumerState<DataQualityInboxPage> {
             findingId: f.id,
           ),
         );
-      case ConsolidateDuplicateRepair(
-        :final targetDiveId,
-        :final secondaryDiveId,
-      ):
-        await runDiveConsolidation(
+      case ConsolidateDuplicateRepair(:final diveIds):
+        // The dialog owns the survivor choice, and runDiveConsolidation
+        // queues the rescan once apply has resolved. Queueing one here on
+        // return would scan the pre-merge rows: the dialog pops before the
+        // merge completes.
+        await showCombineDivesDialog(
           context: context,
-          service: ref.read(diveConsolidationServiceProvider),
-          targetDiveId: targetDiveId,
-          secondaryDiveIds: [secondaryDiveId],
-          onConsolidated: () => scheduleQualityScan([targetDiveId]),
+          diveIds: diveIds,
+          consolidateOnly: true,
+        );
+      case DeleteDuplicateRepair(:final keepDiveId, :final deleteDiveId):
+        // Destructive, so it names both dives, says what the copy it deletes
+        // carries, and waits for an explicit yes before the executor writes
+        // anything. The counts are read here rather than in build: one dive,
+        // once, on the tap that could lose it.
+        //
+        // A failed read aborts, reported like any failed repair. Opening the
+        // dialog without the line instead would look exactly like "this copy
+        // holds nothing", and the card drops this Future, so an uncaught
+        // error would make the tap do nothing at all.
+        final DiverDataSummary? carries;
+        try {
+          carries = await DiverDataQuery().forDive(deleteDiveId);
+        } catch (e) {
+          messenger.showSnackBar(
+            SnackBar(content: Text('${l10n.dataQuality_repair_failed}: $e')),
+          );
+          return;
+        }
+        if (!mounted) return;
+        final confirmed = await showDeleteDuplicateDialog(
+          context,
+          keep: identityOf(keepDiveId),
+          delete: identityOf(deleteDiveId),
+          carries: carries,
+        );
+        if (confirmed != true) return;
+        await withUndo(
+          () => executor.deleteDuplicate(
+            keepDiveId: keepDiveId,
+            deleteDiveId: deleteDiveId,
+            findingId: f.id,
+          ),
+          undoWindow: _destructiveUndoWindow,
         );
       case CombineSplitRepair(:final diveIds):
         await showCombineDivesDialog(context: context, diveIds: diveIds);
@@ -176,6 +235,7 @@ class _DataQualityInboxPageState extends ConsumerState<DataQualityInboxPage> {
               .read(diveSplitServiceProvider)
               .split(diveId: diveId, sourceId: sourceId);
           scheduleQualityScan([diveId, newId]);
+          scheduleSensorSummaryRefresh([diveId, newId], force: true);
         } catch (e) {
           messenger.showSnackBar(
             SnackBar(content: Text(l10n.diveLog_sources_splitFailed)),
@@ -305,6 +365,15 @@ class _DataQualityInboxPageState extends ConsumerState<DataQualityInboxPage> {
         );
       case CompareSourcesRepair(:final diveId):
         if (context.mounted) context.push('/dives/$diveId');
+      case AssignTransmitterRepair(:final serial):
+        if (context.mounted) {
+          context.push(
+            Uri(
+              path: '/transmitters/new',
+              queryParameters: {'serial': serial},
+            ).toString(),
+          );
+        }
       case GoToDiveRepair(:final diveId):
         if (context.mounted) context.push('/dives/$diveId');
     }
@@ -427,7 +496,8 @@ class _DataQualityInboxPageState extends ConsumerState<DataQualityInboxPage> {
                                 formatters: formatters,
                                 relatedDive: identity(f.relatedDiveId),
                                 computerName: computerNames[f.computerId],
-                                onRepair: (a) => _runAction(f, a),
+                                onRepair: (a) =>
+                                    _runAction(f, a, identityOf: identity),
                                 onDismiss: () => ref
                                     .read(qualityFindingsRepositoryProvider)
                                     .setStatus(f.id, QualityStatus.dismissed),
@@ -714,31 +784,5 @@ Future<({Duration offset, bool importWide})?> showTimeShiftSheet(
         ),
       );
     },
-  );
-}
-
-/// Simple picker listing the dive's other tanks for a series reassignment.
-Future<String?> showReassignTankPicker(
-  BuildContext context,
-  WidgetRef ref, {
-  required String diveId,
-  required String excludeTankId,
-}) async {
-  final dive = await ref.read(diveProvider(diveId).future);
-  if (dive == null || !context.mounted) return null;
-  final candidates = dive.tanks.where((t) => t.id != excludeTankId).toList();
-  if (candidates.isEmpty) return null;
-  return showDialog<String>(
-    context: context,
-    builder: (context) => SimpleDialog(
-      title: Text(context.l10n.dataQuality_repairLabel_reassignSeries),
-      children: [
-        for (final t in candidates)
-          SimpleDialogOption(
-            onPressed: () => Navigator.of(context).pop(t.id),
-            child: Text(t.name ?? 'Tank ${t.order + 1}'),
-          ),
-      ],
-    ),
   );
 }

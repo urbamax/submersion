@@ -10,6 +10,8 @@ import 'package:submersion/core/services/export/models/uddf_export_options.dart'
 import 'package:submersion/core/services/export/shared/file_export_utils.dart';
 import 'package:submersion/core/services/export/uddf/uddf_dump_codec.dart';
 import 'package:submersion/core/services/export/uddf/uddf_export_builders.dart';
+import 'package:submersion/core/services/export/uddf/uddf_gear_writers.dart';
+import 'package:submersion/core/services/export/uddf/uddf_participant_writers.dart';
 import 'package:submersion/features/buddies/domain/entities/buddy.dart';
 import 'package:submersion/features/certifications/domain/entities/certification.dart';
 import 'package:submersion/features/courses/domain/entities/course.dart';
@@ -22,9 +24,12 @@ import 'package:submersion/features/dive_log/domain/entities/gas_switch.dart';
 import 'package:submersion/features/dive_log/domain/entities/profile_event.dart';
 import 'package:submersion/features/dive_sites/domain/entities/dive_site.dart';
 import 'package:submersion/features/dive_types/domain/entities/dive_type_entity.dart';
+import 'package:submersion/features/site_types/domain/entities/site_type_entity.dart';
 import 'package:submersion/features/dive_roles/domain/entities/dive_role.dart';
 import 'package:submersion/features/divers/domain/entities/diver.dart';
 import 'package:submersion/features/equipment/domain/entities/equipment_item.dart';
+import 'package:submersion/features/equipment/domain/entities/equipment_component.dart';
+import 'package:submersion/features/equipment/domain/entities/equipment_observation.dart';
 import 'package:submersion/features/equipment/domain/entities/equipment_set.dart';
 import 'package:submersion/features/marine_life/domain/entities/species.dart';
 import 'package:submersion/features/tags/domain/entities/tag.dart';
@@ -50,6 +55,7 @@ class UddfFullExportService {
     List<DiveCenter>? diveCenters,
     List<Species>? species,
     List<ServiceRecord>? serviceRecords,
+    List<EquipmentObservation>? observations,
     Map<String, String>? settings,
     Map<String, List<BuddyWithRole>>? diveBuddies,
     Diver? owner,
@@ -57,11 +63,17 @@ class UddfFullExportService {
     List<Tag>? tags,
     Map<String, List<Tag>>? diveTags,
     List<DiveTypeEntity>? customDiveTypes,
+    // Site types and site tags (issue #1765): the custom type definitions,
+    // and each exported site's type slugs and tag ids.
+    List<SiteTypeEntity>? customSiteTypes,
+    Map<String, List<String>> siteTypeIdsBySite = const {},
+    Map<String, List<String>> siteTagIdsBySite = const {},
     List<DiveRole>? customDiveRoles,
     List<DiveComputer>? diveComputers,
     Map<String, List<ProfileEvent>>? diveProfileEvents,
     Map<String, List<DiveWeight>>? diveWeights,
     List<EquipmentSet>? equipmentSets,
+    List<EquipmentComponent>? components,
     List<Course>? courses,
     Map<String, List<GasSwitchWithTank>>? diveGasSwitches,
     Map<String, Map<String, List<TankPressurePoint>>>? diveTankPressures,
@@ -83,20 +95,12 @@ class UddfFullExportService {
       for (var i = 0; i < withBytes.length; i++) withBytes[i].id: encoded[i],
     };
 
-    // Which computers this document will actually declare as
-    // <divecomputer id=...>. Mirrors the uniqueComputers block below, which
-    // only runs when there is an owner, and which mints ids from the dives'
-    // own model and serial snapshots. A dump may only link to an id in here.
-    final declaredComputerIds = <String>{
-      if (owner != null)
-        for (final dive in dives)
-          if (dive.diveComputerModel != null &&
-              dive.diveComputerModel!.isNotEmpty)
-            UddfExportBuilders.computerRefId(
-              dive.diveComputerModel!,
-              dive.diveComputerSerial,
-            ),
-    };
+    // Which computers this document actually declares as
+    // <divecomputer id=...>, filled in by the owner block below from the
+    // same writer that declares them, so the two cannot disagree. Stays
+    // empty without an owner, since the declarations live under it. A dump
+    // may only link to an id in here.
+    var declaredComputerIds = const <String>{};
 
     final builder = XmlBuilder();
 
@@ -155,46 +159,10 @@ class UddfFullExportService {
                       },
                     );
                     // Export dive computers used in equipment section
-                    // Collect unique dive computers from all dives
-                    final uniqueComputers = <String, Map<String, String>>{};
-                    for (final dive in dives) {
-                      if (dive.diveComputerModel != null &&
-                          dive.diveComputerModel!.isNotEmpty) {
-                        final computerId = UddfExportBuilders.computerRefId(
-                          dive.diveComputerModel!,
-                          dive.diveComputerSerial,
-                        );
-                        uniqueComputers[computerId] = {
-                          'model': dive.diveComputerModel!,
-                          'serial': dive.diveComputerSerial ?? '',
-                        };
-                      }
-                    }
-                    if (uniqueComputers.isNotEmpty) {
-                      builder.element(
-                        'equipment',
-                        nest: () {
-                          for (final entry in uniqueComputers.entries) {
-                            builder.element(
-                              'divecomputer',
-                              attributes: {'id': entry.key},
-                              nest: () {
-                                builder.element(
-                                  'model',
-                                  nest: entry.value['model'],
-                                );
-                                if (entry.value['serial']!.isNotEmpty) {
-                                  builder.element(
-                                    'serialnumber',
-                                    nest: entry.value['serial'],
-                                  );
-                                }
-                              },
-                            );
-                          }
-                        },
-                      );
-                    }
+                    declaredComputerIds = UddfGearWriters.writeOwnerComputers(
+                      builder,
+                      dives,
+                    );
                     // Certifications will be added in applicationdata section
                   },
                 );
@@ -202,57 +170,7 @@ class UddfFullExportService {
 
               // Export buddies
               if (buddies != null) {
-                for (final buddy in buddies) {
-                  builder.element(
-                    'buddy',
-                    attributes: {'id': 'buddy_${buddy.id}'},
-                    nest: () {
-                      builder.element(
-                        'personal',
-                        nest: () {
-                          // Split name into first/last
-                          final nameParts = buddy.name.split(' ');
-                          builder.element('firstname', nest: nameParts.first);
-                          if (nameParts.length > 1) {
-                            builder.element(
-                              'lastname',
-                              nest: nameParts.sublist(1).join(' '),
-                            );
-                          }
-                          if (buddy.email != null && buddy.email!.isNotEmpty) {
-                            builder.element('email', nest: buddy.email);
-                          }
-                          if (buddy.phone != null && buddy.phone!.isNotEmpty) {
-                            builder.element('phone', nest: buddy.phone);
-                          }
-                        },
-                      );
-                      if (buddy.certificationLevel != null ||
-                          buddy.certificationAgency != null) {
-                        builder.element(
-                          'certification',
-                          nest: () {
-                            if (buddy.certificationLevel != null) {
-                              builder.element(
-                                'level',
-                                nest: buddy.certificationLevel!.name,
-                              );
-                            }
-                            if (buddy.certificationAgency != null) {
-                              builder.element(
-                                'agency',
-                                nest: buddy.certificationAgency!.name,
-                              );
-                            }
-                          },
-                        );
-                      }
-                      if (buddy.notes.isNotEmpty) {
-                        builder.element('notes', nest: buddy.notes);
-                      }
-                    },
-                  );
-                }
+                UddfParticipantWriters.writeBuddyDeclarations(builder, buddies);
               }
             },
           );
@@ -267,7 +185,12 @@ class UddfFullExportService {
             'divesite',
             nest: () {
               for (final site in allSites) {
-                UddfExportBuilders.buildSiteElement(builder, site);
+                UddfExportBuilders.buildSiteElement(
+                  builder,
+                  site,
+                  siteTypeIds: siteTypeIdsBySite[site.id] ?? const [],
+                  tagIds: siteTagIdsBySite[site.id] ?? const [],
+                );
               }
             },
           );
@@ -446,10 +369,12 @@ class UddfFullExportService {
           diveCenters: diveCenters,
           species: species,
           serviceRecords: serviceRecords,
+          observations: observations,
           settings: settings,
           owner: owner,
           tags: tags,
           customDiveTypes: customDiveTypes,
+          customSiteTypes: customSiteTypes,
           customDiveRoles: customDiveRoles,
           diveComputers: diveComputers,
           equipmentSets: equipmentSets,
@@ -457,6 +382,9 @@ class UddfFullExportService {
           courses: courses,
           dataSources: sources,
           dataSourceDumps: encodedById,
+          components: components,
+          gearLinkDives: dives,
+          diveBuddies: diveBuddies,
         );
 
         // The UDDF specification places <divecomputercontrol> last, so this
@@ -481,13 +409,49 @@ class UddfFullExportService {
   /// inspects the document itself.
   Future<String> generateAllDataXmlForTest({
     required List<Dive> dives,
+    List<DiveSite>? sites,
+    List<Tag>? tags,
+    List<SiteTypeEntity>? customSiteTypes,
+    Map<String, List<String>> siteTypeIdsBySite = const {},
+    Map<String, List<String>> siteTagIdsBySite = const {},
     Diver? owner,
+    List<Buddy>? buddies,
+    Map<String, List<BuddyWithRole>>? diveBuddies,
+    List<DiveRole>? customDiveRoles,
+    List<EquipmentItem>? equipment,
+    List<EquipmentSet>? equipmentSets,
+    List<EquipmentComponent>? components,
     List<DiveSourceExport>? dataSources,
+    List<EquipmentObservation>? observations,
+    List<ServiceRecord>? serviceRecords,
+    Map<String, List<Tag>>? diveTags,
+    Map<String, List<DiveWeight>>? diveWeights,
+    Map<String, List<GasSwitchWithTank>>? diveGasSwitches,
+    Map<String, List<ProfileEvent>>? diveProfileEvents,
+    Map<String, Map<String, List<TankPressurePoint>>>? diveTankPressures,
     UddfExportOptions options = const UddfExportOptions(),
   }) => _generateAllDataXml(
     dives: dives,
+    sites: sites,
+    tags: tags,
+    customSiteTypes: customSiteTypes,
+    siteTypeIdsBySite: siteTypeIdsBySite,
+    siteTagIdsBySite: siteTagIdsBySite,
     owner: owner,
+    buddies: buddies,
+    diveBuddies: diveBuddies,
+    customDiveRoles: customDiveRoles,
+    equipment: equipment,
+    equipmentSets: equipmentSets,
+    components: components,
     dataSources: dataSources,
+    observations: observations,
+    serviceRecords: serviceRecords,
+    diveTags: diveTags,
+    diveWeights: diveWeights,
+    diveGasSwitches: diveGasSwitches,
+    diveProfileEvents: diveProfileEvents,
+    diveTankPressures: diveTankPressures,
     options: options,
   );
 
@@ -502,6 +466,7 @@ class UddfFullExportService {
     List<DiveCenter>? diveCenters,
     List<Species>? species,
     List<ServiceRecord>? serviceRecords,
+    List<EquipmentObservation>? observations,
     Map<String, String>? settings,
     Map<String, List<BuddyWithRole>>? diveBuddies,
     Diver? owner,
@@ -509,11 +474,17 @@ class UddfFullExportService {
     List<Tag>? tags,
     Map<String, List<Tag>>? diveTags,
     List<DiveTypeEntity>? customDiveTypes,
+    // Site types and site tags (issue #1765): the custom type definitions,
+    // and each exported site's type slugs and tag ids.
+    List<SiteTypeEntity>? customSiteTypes,
+    Map<String, List<String>> siteTypeIdsBySite = const {},
+    Map<String, List<String>> siteTagIdsBySite = const {},
     List<DiveRole>? customDiveRoles,
     List<DiveComputer>? diveComputers,
     Map<String, List<ProfileEvent>>? diveProfileEvents,
     Map<String, List<DiveWeight>>? diveWeights,
     List<EquipmentSet>? equipmentSets,
+    List<EquipmentComponent>? components,
     List<Course>? courses,
     Map<String, List<GasSwitchWithTank>>? diveGasSwitches,
     Map<String, Map<String, List<TankPressurePoint>>>? diveTankPressures,
@@ -529,6 +500,7 @@ class UddfFullExportService {
       diveCenters: diveCenters,
       species: species,
       serviceRecords: serviceRecords,
+      observations: observations,
       settings: settings,
       diveBuddies: diveBuddies,
       owner: owner,
@@ -536,11 +508,15 @@ class UddfFullExportService {
       tags: tags,
       diveTags: diveTags,
       customDiveTypes: customDiveTypes,
+      customSiteTypes: customSiteTypes,
+      siteTypeIdsBySite: siteTypeIdsBySite,
+      siteTagIdsBySite: siteTagIdsBySite,
       customDiveRoles: customDiveRoles,
       diveComputers: diveComputers,
       diveProfileEvents: diveProfileEvents,
       diveWeights: diveWeights,
       equipmentSets: equipmentSets,
+      components: components,
       courses: courses,
       diveGasSwitches: diveGasSwitches,
       diveTankPressures: diveTankPressures,
@@ -563,6 +539,7 @@ class UddfFullExportService {
     List<DiveCenter>? diveCenters,
     List<Species>? species,
     List<ServiceRecord>? serviceRecords,
+    List<EquipmentObservation>? observations,
     Map<String, String>? settings,
     Map<String, List<BuddyWithRole>>? diveBuddies,
     Diver? owner,
@@ -570,11 +547,17 @@ class UddfFullExportService {
     List<Tag>? tags,
     Map<String, List<Tag>>? diveTags,
     List<DiveTypeEntity>? customDiveTypes,
+    // Site types and site tags (issue #1765): the custom type definitions,
+    // and each exported site's type slugs and tag ids.
+    List<SiteTypeEntity>? customSiteTypes,
+    Map<String, List<String>> siteTypeIdsBySite = const {},
+    Map<String, List<String>> siteTagIdsBySite = const {},
     List<DiveRole>? customDiveRoles,
     List<DiveComputer>? diveComputers,
     Map<String, List<ProfileEvent>>? diveProfileEvents,
     Map<String, List<DiveWeight>>? diveWeights,
     List<EquipmentSet>? equipmentSets,
+    List<EquipmentComponent>? components,
     List<Course>? courses,
     Map<String, List<GasSwitchWithTank>>? diveGasSwitches,
     Map<String, Map<String, List<TankPressurePoint>>>? diveTankPressures,
@@ -590,6 +573,7 @@ class UddfFullExportService {
       diveCenters: diveCenters,
       species: species,
       serviceRecords: serviceRecords,
+      observations: observations,
       settings: settings,
       diveBuddies: diveBuddies,
       owner: owner,
@@ -597,11 +581,15 @@ class UddfFullExportService {
       tags: tags,
       diveTags: diveTags,
       customDiveTypes: customDiveTypes,
+      customSiteTypes: customSiteTypes,
+      siteTypeIdsBySite: siteTypeIdsBySite,
+      siteTagIdsBySite: siteTagIdsBySite,
       customDiveRoles: customDiveRoles,
       diveComputers: diveComputers,
       diveProfileEvents: diveProfileEvents,
       diveWeights: diveWeights,
       equipmentSets: equipmentSets,
+      components: components,
       courses: courses,
       diveGasSwitches: diveGasSwitches,
       diveTankPressures: diveTankPressures,

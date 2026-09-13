@@ -10,6 +10,7 @@ import 'package:submersion/features/dive_log/domain/entities/dive_weight.dart';
 import 'package:submersion/features/equipment/domain/constants/equipment_attribute_catalog.dart';
 import 'package:submersion/features/equipment/domain/entities/equipment_attribute.dart';
 import 'package:submersion/features/equipment/domain/entities/equipment_item.dart';
+import 'package:submersion/features/equipment/domain/entities/gear_link.dart';
 
 void main() {
   FittedWeightModel emptyModel() => WeightPredictionEngine.fit(
@@ -58,7 +59,7 @@ void main() {
     id: 'd1',
     dateTime: DateTime(2024, 1, 1),
     tanks: tanks,
-    equipment: equipment,
+    gear: looseGear(equipment),
     weights: weights,
     weightAmount: weightAmount,
     weightType: weightType,
@@ -523,6 +524,34 @@ void main() {
     test('omits the term without any height', () {
       final rig = compose(emptyModel());
       expect(rig.staticTerms.any((t) => t.label == 'bmi'), isFalse);
+    });
+  });
+
+  group('BuoyancyTwinAssembler.composeRigTerms salinity', () {
+    double waterTerm({WaterType? waterType, double? salinityPpt}) =>
+        BuoyancyTwinAssembler.composeRigTerms(
+          items: const [wetsuit],
+          tanks: const [],
+          model: emptyModel(),
+          waterType: waterType,
+          salinityPpt: salinityPpt,
+          bodyWeightKg: 80,
+        ).staticTerms.singleWhere((t) => t.label == 'water').kg;
+
+    test('a custom salinity overrides the salt default', () {
+      // A custom-salinity plan carries waterType salt as its fallback; the
+      // water term must still follow the salinity, not the fallback.
+      expect(
+        waterTerm(waterType: WaterType.salt, salinityPpt: 0),
+        closeTo(waterTerm(waterType: WaterType.fresh), 1e-9),
+      );
+    });
+
+    test('sea salinity matches the salt baseline', () {
+      expect(
+        waterTerm(waterType: WaterType.salt, salinityPpt: 35),
+        closeTo(waterTerm(waterType: WaterType.salt), 1e-9),
+      );
     });
   });
 }

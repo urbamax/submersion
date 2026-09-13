@@ -5,6 +5,7 @@ import 'package:submersion/core/domain/models/incoming_dive_data.dart';
 import 'package:submersion/core/providers/provider.dart';
 import 'package:submersion/core/services/logger_service.dart';
 import 'package:submersion/core/utils/unit_formatter.dart';
+import 'package:submersion/features/equipment/data/services/sensor_summary_scheduler.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
 import 'package:submersion/features/data_quality/data/services/quality_scan_service.dart';
 import 'package:submersion/features/dive_computer/data/services/dive_import_service.dart';
@@ -20,12 +21,15 @@ import 'package:submersion/features/dive_log/data/repositories/dive_repository_i
 import 'package:submersion/features/dive_log/data/services/dive_consolidation_service.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive_computer.dart';
 import 'package:submersion/features/dive_log/domain/services/unreadable_series_exception.dart';
+import 'package:submersion/features/import_wizard/data/adapters/dive_number_conflict_notice.dart';
 import 'package:submersion/features/import_wizard/domain/adapters/import_source_adapter.dart';
 import 'package:submersion/features/import_wizard/domain/models/duplicate_action.dart';
 import 'package:submersion/features/import_wizard/domain/models/import_cancellation_token.dart';
 import 'package:submersion/features/import_wizard/domain/models/import_phase.dart';
 import 'package:submersion/features/import_wizard/domain/models/import_bundle.dart';
+import 'package:submersion/features/import_wizard/domain/models/import_notice.dart';
 import 'package:submersion/features/import_wizard/domain/models/unified_import_result.dart';
+import 'package:submersion/features/dive_log/domain/services/transmitter_serial.dart';
 import 'package:submersion/shared/widgets/wizard/wizard_step_def.dart';
 import 'package:submersion/features/import_wizard/presentation/widgets/dc_adapter_steps.dart';
 
@@ -490,6 +494,10 @@ class DiveComputerAdapter implements ImportSourceAdapter {
     );
     final diveActions = duplicateActions[ImportEntityType.dives] ?? {};
 
+    // The import service outlives this run; start its unmatched-serial
+    // accumulator fresh so an earlier session cannot leak into this notice.
+    _importService.resetUnmatchedTransmitterSerials();
+
     // Build the final set of indices and track actions.
     final indicesToImport = <int>{};
     final indicesToConsolidate = <int>{};
@@ -541,6 +549,9 @@ class DiveComputerAdapter implements ImportSourceAdapter {
     var consolidated = 0;
     var updated = 0;
     final processedDives = <DownloadedDive>[];
+    // Dives this run actually wrote (new, consolidated, kept standalone or
+    // source-replaced); skipped duplicates never count toward a notice.
+    final writtenDives = <DownloadedDive>[];
     final importedDiveIds = <String>[];
 
     for (var i = 0; i < allIndices.length; i++) {
@@ -556,15 +567,24 @@ class DiveComputerAdapter implements ImportSourceAdapter {
         final diveGroup = bundle.groups[ImportEntityType.dives];
         final matchResult = diveGroup?.matchResults?[index];
         if (matchResult != null) {
-          final result = await _consolidateDive(dive, matchResult.diveId, comp);
+          final result = await _consolidateDive(
+            dive,
+            matchResult.diveId,
+            comp,
+            // A dive the fold refuses is kept standalone, so it must carry
+            // the same number an import-as-new would have given it.
+            retainSourceDiveNumber: retainSourceDiveNumbers,
+          );
           switch (result.outcome) {
             case _ConsolidateOutcome.consolidated:
               consolidated++;
+              writtenDives.add(dive);
             case _ConsolidateOutcome.keptStandalone:
               // The fold refused, but the download survived as its own dive,
               // so it counts as imported. Reporting it as skipped would hide
               // a dive the fingerprint is about to advance past.
               imported++;
+              writtenDives.add(dive);
               final keptId = result.diveId;
               if (keptId != null) importedDiveIds.add(keptId);
             case _ConsolidateOutcome.skippedSameComputer:
@@ -598,6 +618,7 @@ class DiveComputerAdapter implements ImportSourceAdapter {
             libdivecomputerVersion: _libdivecomputerVersion,
           );
           updated++;
+          writtenDives.add(dive);
         }
       } else {
         // Import as new dive. Use importSingleDiveAsNew to bypass the
@@ -611,9 +632,11 @@ class DiveComputerAdapter implements ImportSourceAdapter {
           descriptorProduct: _descriptorProduct,
           descriptorModel: _descriptorModel,
           libdivecomputerVersion: _libdivecomputerVersion,
+          retainSourceDiveNumber: retainSourceDiveNumbers,
         );
         imported++;
         importedDiveIds.add(diveId);
+        writtenDives.add(dive);
       }
 
       processedDives.add(dive);
@@ -635,14 +658,43 @@ class DiveComputerAdapter implements ImportSourceAdapter {
 
     // Queue a data-quality scan of the imported dives (fire-and-forget).
     scheduleQualityScan(importedDiveIds);
+    scheduleSensorSummaryRefresh(importedDiveIds);
 
+    final unmatched = _importService.unmatchedTransmitterSerials;
+    final numberConflict = await diveNumberConflictNotice(
+      retainSourceDiveNumbers: retainSourceDiveNumbers,
+      diveRepository: _diveRepository,
+      importedDiveIds: importedDiveIds,
+    );
     return UnifiedImportResult(
       importedCounts: {ImportEntityType.dives: imported},
       consolidatedCount: consolidated,
       updatedCount: updated,
       skippedCount: skipped,
       importedDiveIds: importedDiveIds,
+      notices: [
+        if (unmatched.isNotEmpty && writtenDives.isNotEmpty)
+          ImportNotice(
+            kind: ImportNoticeKind.unknownTransmitter,
+            count: _divesCarrying(unmatched, writtenDives),
+          ),
+        ?numberConflict,
+      ],
     );
+  }
+
+  /// How many of the dives this run wrote carry an unmatched serial. Skipped
+  /// duplicates are not in [written], so they cannot inflate the count.
+  int _divesCarrying(List<String> unmatched, List<DownloadedDive> written) {
+    final set = unmatched.toSet();
+    return written
+        .where(
+          (dive) => dive.tanks.any(
+            (t) =>
+                set.contains(normalizeTransmitterSerial(t.transmitterSerial)),
+          ),
+        )
+        .length;
   }
 
   // ---------------------------------------------------------------------------
@@ -705,8 +757,9 @@ class DiveComputerAdapter implements ImportSourceAdapter {
   Future<_ConsolidateResult> _consolidateDive(
     DownloadedDive dive,
     String targetDiveId,
-    DiveComputer comp,
-  ) async {
+    DiveComputer comp, {
+    required bool retainSourceDiveNumber,
+  }) async {
     final targetComputerId = await _diveRepository.getComputerIdForDive(
       targetDiveId,
     );
@@ -724,6 +777,7 @@ class DiveComputerAdapter implements ImportSourceAdapter {
         descriptorProduct: _descriptorProduct,
         descriptorModel: _descriptorModel,
         libdivecomputerVersion: _libdivecomputerVersion,
+        retainSourceDiveNumber: retainSourceDiveNumber,
       );
       await _consolidationService.apply(
         targetDiveId: targetDiveId,

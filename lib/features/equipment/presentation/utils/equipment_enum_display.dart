@@ -13,7 +13,16 @@ import 'package:submersion/l10n/arb/app_localizations.dart';
 extension EquipmentTypeDisplay on EquipmentType {
   String localizedName(AppLocalizations l10n) => switch (this) {
     EquipmentType.regulator => l10n.enum_equipmentType_regulator,
+    EquipmentType.firstStage => l10n.enum_equipmentType_firstStage,
+    EquipmentType.secondStage => l10n.enum_equipmentType_secondStage,
+    EquipmentType.hose => l10n.enum_equipmentType_hose,
     EquipmentType.bcd => l10n.enum_equipmentType_bcd,
+    EquipmentType.backplate => l10n.enum_equipmentType_backplate,
+    EquipmentType.wing => l10n.enum_equipmentType_wing,
+    EquipmentType.harness => l10n.enum_equipmentType_harness,
+    EquipmentType.tankBand => l10n.enum_equipmentType_tankBand,
+    EquipmentType.weightPocket => l10n.enum_equipmentType_weightPocket,
+    EquipmentType.gearPocket => l10n.enum_equipmentType_gearPocket,
     EquipmentType.wetsuit => l10n.enum_equipmentType_wetsuit,
     EquipmentType.drysuit => l10n.enum_equipmentType_drysuit,
     EquipmentType.undersuit => l10n.enum_equipmentType_undersuit,
@@ -31,6 +40,8 @@ extension EquipmentTypeDisplay on EquipmentType {
     EquipmentType.weights => l10n.enum_equipmentType_weights,
     EquipmentType.light => l10n.enum_equipmentType_light,
     EquipmentType.camera => l10n.enum_equipmentType_camera,
+    EquipmentType.housing => l10n.enum_equipmentType_housing,
+    EquipmentType.strobe => l10n.enum_equipmentType_strobe,
     EquipmentType.smb => l10n.enum_equipmentType_smb,
     EquipmentType.reel => l10n.enum_equipmentType_reel,
     EquipmentType.knife => l10n.enum_equipmentType_knife,
@@ -39,6 +50,8 @@ extension EquipmentTypeDisplay on EquipmentType {
     EquipmentType.gloves => l10n.enum_equipmentType_gloves,
     EquipmentType.boots => l10n.enum_equipmentType_boots,
     EquipmentType.dpv => l10n.enum_equipmentType_dpv,
+    EquipmentType.o2Cell => l10n.enum_equipmentType_o2Cell,
+    EquipmentType.battery => l10n.enum_equipmentType_battery,
     EquipmentType.other => l10n.enum_equipmentType_other,
   };
 }
@@ -46,9 +59,11 @@ extension EquipmentTypeDisplay on EquipmentType {
 extension EquipmentStatusDisplay on EquipmentStatus {
   String localizedName(AppLocalizations l10n) => switch (this) {
     EquipmentStatus.active => l10n.enum_equipmentStatus_active,
+    EquipmentStatus.spare => l10n.enum_equipmentStatus_spare,
     EquipmentStatus.needsService => l10n.enum_equipmentStatus_needsService,
     EquipmentStatus.inService => l10n.enum_equipmentStatus_inService,
     EquipmentStatus.retired => l10n.enum_equipmentStatus_retired,
+    EquipmentStatus.sold => l10n.enum_equipmentStatus_sold,
     EquipmentStatus.loaned => l10n.enum_equipmentStatus_loaned,
     EquipmentStatus.lost => l10n.enum_equipmentStatus_lost,
   };

@@ -8,6 +8,7 @@ import 'package:submersion/features/dive_planner/domain/entities/plan_segment.da
 import 'package:submersion/features/dive_planner/presentation/providers/dive_planner_providers.dart';
 import 'package:submersion/features/divers/presentation/providers/diver_weight_entry_providers.dart';
 import 'package:submersion/features/equipment/domain/entities/equipment_item.dart';
+import 'package:submersion/features/equipment/domain/services/gear_tree.dart';
 import 'package:submersion/features/equipment/presentation/providers/equipment_providers.dart';
 import 'package:submersion/features/planner/domain/services/segment_chain.dart';
 import 'package:submersion/features/weight_planner/presentation/providers/weight_planner_providers.dart';
@@ -97,13 +98,17 @@ final planBuoyancyTwinProvider = Provider<BuoyancyTwinOutcome?>((ref) {
       ),
   ];
 
+  // Same density precedence as the TwinInput environment below: a custom
+  // salinity wins over the water type, so the rig's water term and the deco
+  // environment never disagree about what the diver is floating in.
   final rig = BuoyancyTwinAssembler.composeRigTerms(
     items: items,
     tanks: tanks,
     model: model,
-    waterType:
-        WaterType.salt, // plan state carries no water type; salt baseline
+    waterType: state.waterType ?? WaterType.salt,
+    salinityPpt: state.salinityPpt,
     bodyWeightKg: latestWeight?.weightKg,
+    rolledUpIds: GearTree.rolledUpIds(state.fullGearProvenance),
   );
 
   // Some planned lead may be non-ditchable (e.g. backplate/trim). When the
@@ -129,8 +134,8 @@ final planBuoyancyTwinProvider = Provider<BuoyancyTwinOutcome?>((ref) {
     droppableLeadKg: droppableLead,
     environment: DiveEnvironment.forConditions(
       altitudeMeters: state.altitude,
-      waterType:
-          WaterType.salt, // salt baseline, matching composeRigTerms above
+      waterType: state.waterType ?? WaterType.salt,
+      salinityPpt: state.salinityPpt,
     ),
     totalMassKg: rig.totalMassKg,
   );

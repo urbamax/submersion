@@ -2,7 +2,8 @@ import 'dart:convert';
 import 'dart:io' show Platform, HttpClient, SocketException;
 import 'dart:ui' show Locale;
 
-import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb, visibleForTesting;
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 
@@ -13,6 +14,33 @@ import 'package:submersion/core/services/logger_service.dart';
 
 /// Check if we're on a mobile platform (iOS/Android)
 bool get _isMobile => !kIsWeb && (Platform.isIOS || Platform.isAndroid);
+
+/// Nominatim (and, following it, the platform geocoders) reports a handful of
+/// administrative "states" that only restate the country: the mainland part of
+/// a country that also holds overseas territories. Stored as a region they
+/// render as "Metropolitan France, France". Treat them as no region at all.
+const _pseudoRegions = <String>{
+  'metropolitan france',
+  'european netherlands',
+  'continental portugal',
+  'mainland portugal',
+  'metropolitan denmark',
+  'european spain',
+  'peninsular spain',
+};
+
+/// A region string with the country-restating pseudo-regions above removed,
+/// and a region that merely repeats [country] dropped too. Returns null when
+/// nothing meaningful is left, so callers can `?? next candidate`.
+@visibleForTesting
+String? normalizeGeocodedRegion(String? region, {String? country}) {
+  final trimmed = region?.trim();
+  if (trimmed == null || trimmed.isEmpty) return null;
+  final lower = trimmed.toLowerCase();
+  if (_pseudoRegions.contains(lower)) return null;
+  if (country != null && country.trim().toLowerCase() == lower) return null;
+  return trimmed;
+}
 
 /// Nominatim answered with something other than 200. "Nothing here" is a
 /// 200 with an error body, so a non-200 is the service itself (rate limit,
@@ -126,16 +154,20 @@ class LocationService {
     '&accept-language=$defaultLanguageCode',
   );
 
-  /// Routes reverse geocoding through the platform geocoder.
+  /// Routes reverse geocoding through the platform geocoder: iOS only.
   ///
-  /// True on mobile in production. `Platform.isIOS`/`isAndroid` are
-  /// natively-resolved statics with no override hook, so the mobile branch
-  /// is otherwise unreachable on a desktop test host -- including the
-  /// English-locale contract below, the part of #214 most worth asserting.
-  @visibleForTesting
-  static bool debugForceNativeGeocoder = false;
-
-  static bool get _useNativeGeocoder => debugForceNativeGeocoder || _isMobile;
+  /// Apple's geocoder answers every field in the requested language. The
+  /// Android one (Play services) translates only the country name and
+  /// returns the region in the local language, and not even consistently:
+  /// one Attersee lookup in English mixed 'Oberösterreich' and 'Upper
+  /// Austria' across its results. A place name language refresh on Android
+  /// therefore wrote local region names back (#1762), so Android shares the
+  /// Nominatim path the desktops use.
+  ///
+  /// Keyed on [defaultTargetPlatform] rather than `Platform.isIOS` so tests
+  /// can reach both branches through `debugDefaultTargetPlatformOverride`.
+  static bool get _useNativeGeocoder =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
   /// Process-wide spacing for every Nominatim request. Tests replace it with
   /// a zero-gap instance so lookups do not wait a real second each.
@@ -292,9 +324,9 @@ class LocationService {
   /// Reverse geocode a coordinate into country, region and locality, in the
   /// language named by [languageCode] (an ISO 639-1 code such as 'en').
   ///
-  /// Uses the platform geocoder on mobile and falls back to OpenStreetMap
-  /// Nominatim everywhere else. Never throws: a geocoder that cannot be
-  /// reached yields [PlaceLookup.unavailable].
+  /// Uses the platform geocoder on iOS, and OpenStreetMap Nominatim
+  /// everywhere else and whenever the iOS geocoder fails. Never throws: a
+  /// geocoder that cannot be reached yields [PlaceLookup.unavailable].
   Future<PlaceLookup> reverseGeocode(
     double latitude,
     double longitude, {
@@ -303,7 +335,7 @@ class LocationService {
     try {
       _log.info('Reverse geocoding: $latitude, $longitude ($languageCode)');
 
-      // Try native geocoding first (works on iOS/Android)
+      // Try native geocoding first (iOS only, see _useNativeGeocoder)
       if (_useNativeGeocoder) {
         try {
           // Built per call rather than cached in a static: construction only
@@ -322,7 +354,10 @@ class LocationService {
             return await _withBodyOfWater(
               PlaceLookup(
                 country: place.country,
-                region: place.administrativeArea,
+                region: normalizeGeocodedRegion(
+                  place.administrativeArea,
+                  country: place.country,
+                ),
                 locality: place.locality,
               ),
               latitude,
@@ -364,10 +399,22 @@ class LocationService {
       if (address == null) return const PlaceLookup.empty();
 
       final country = address['country'] as String?;
+      // Normalize each candidate, not just the first non-null one: if
+      // `state` is a pseudo-region it is dropped and `province` / `region`
+      // still get their turn.
       final region =
-          address['state'] as String? ??
-          address['province'] as String? ??
-          address['region'] as String?;
+          normalizeGeocodedRegion(
+            address['state'] as String?,
+            country: country,
+          ) ??
+          normalizeGeocodedRegion(
+            address['province'] as String?,
+            country: country,
+          ) ??
+          normalizeGeocodedRegion(
+            address['region'] as String?,
+            country: country,
+          );
       final locality =
           address['city'] as String? ??
           address['town'] as String? ??
@@ -498,10 +545,21 @@ class LocationService {
               final addressDetails =
                   result['address'] as Map<String, dynamic>? ?? {};
               final country = addressDetails['country'] as String?;
+              // Normalize each candidate so a pseudo-region `state` falls
+              // through to `province` / `region` (same as the reverse path).
               final region =
-                  addressDetails['state'] as String? ??
-                  addressDetails['province'] as String? ??
-                  addressDetails['region'] as String?;
+                  normalizeGeocodedRegion(
+                    addressDetails['state'] as String?,
+                    country: country,
+                  ) ??
+                  normalizeGeocodedRegion(
+                    addressDetails['province'] as String?,
+                    country: country,
+                  ) ??
+                  normalizeGeocodedRegion(
+                    addressDetails['region'] as String?,
+                    country: country,
+                  );
               final locality =
                   addressDetails['city'] as String? ??
                   addressDetails['town'] as String? ??

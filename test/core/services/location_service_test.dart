@@ -5,6 +5,8 @@ import 'dart:ui' show Locale;
 
 import 'package:clock/clock.dart';
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:geocoding/geocoding.dart';
 // `geocoding` declares its own app-facing `Geocoding`, which shadows the
@@ -131,6 +133,70 @@ void main() {
         expect(result.locality, 'Tarifa');
       },
     );
+
+    test(
+      'drops a country-restating pseudo-region (Metropolitan France)',
+      () async {
+        final server = FakeNominatim(
+          body: jsonEncode(<String, dynamic>{
+            'address': <String, dynamic>{
+              'country': 'France',
+              'state': 'Metropolitan France',
+              'city': 'Sanary-sur-Mer',
+            },
+          }),
+        );
+
+        final result = await server.run(
+          () => service.reverseGeocode(43.12, 5.8, languageCode: 'en'),
+        );
+
+        expect(result.country, 'France');
+        expect(
+          result.region,
+          isNull,
+          reason: '"Metropolitan France" only restates the country',
+        );
+        expect(result.locality, 'Sanary-sur-Mer');
+      },
+    );
+
+    test('drops a region that just repeats the country', () async {
+      final server = FakeNominatim(
+        body: jsonEncode(<String, dynamic>{
+          'address': <String, dynamic>{
+            'country': 'Singapore',
+            'state': 'Singapore',
+            'city': 'Singapore',
+          },
+        }),
+      );
+
+      final result = await server.run(
+        () => service.reverseGeocode(1.29, 103.85, languageCode: 'en'),
+      );
+
+      expect(result.region, isNull);
+    });
+
+    test('a pseudo-region state falls through to a real province', () async {
+      final server = FakeNominatim(
+        body: jsonEncode(<String, dynamic>{
+          'address': <String, dynamic>{
+            'country': 'France',
+            'state': 'Metropolitan France',
+            'province': 'Provence-Alpes-Côte d\'Azur',
+            'city': 'Sanary-sur-Mer',
+          },
+        }),
+      );
+
+      final result = await server.run(
+        () => service.reverseGeocode(43.12, 5.8, languageCode: 'en'),
+      );
+
+      expect(result.region, 'Provence-Alpes-Côte d\'Azur');
+    });
 
     test(
       'sends the English pin in both the URI and the request headers',
@@ -475,11 +541,11 @@ void main() {
 
   group('native geocoder locale (#214)', () {
     setUp(() {
-      LocationService.debugForceNativeGeocoder = true;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     });
 
     tearDown(() {
-      LocationService.debugForceNativeGeocoder = false;
+      debugDefaultTargetPlatformOverride = null;
     });
 
     test('asks the geocoder for the requested language', () async {
@@ -561,6 +627,80 @@ void main() {
       );
       expect(geocoding.locales, [const Locale('en'), const Locale('en')]);
     });
+  });
+
+  group('Android geocodes through Nominatim (#1762)', () {
+    setUp(() {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    });
+
+    tearDown(() {
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    test('the region follows the requested language', () async {
+      // What the Play services geocoder really answers for Attersee when
+      // asked in English: only the country name is translated, and the
+      // administrative area stays in the local language.
+      final geocoding = _FakeGeocoding(
+        placemarks: const [
+          Placemark(country: 'Austria', administrativeArea: 'Oberösterreich'),
+        ],
+      );
+      GeocodingPlatformFactory.instance = _FakeGeocodingFactory(geocoding);
+      final server = FakeNominatim(
+        body: jsonEncode(<String, dynamic>{
+          'address': <String, dynamic>{
+            'country': 'Austria',
+            'state': 'Upper Austria',
+            'village': 'Nußdorf am Attersee',
+          },
+        }),
+      );
+
+      final result = await server.run(
+        () => service.reverseGeocode(47.88, 13.545, languageCode: 'en'),
+      );
+
+      expect(
+        geocoding.locales,
+        isEmpty,
+        reason:
+            'the Android geocoder ignores the locale for everything but the '
+            'country, so a refresh would write local region names back',
+      );
+      expect(result.country, 'Austria');
+      expect(result.region, 'Upper Austria');
+      expect(result.locality, 'Nußdorf am Attersee');
+      expect(
+        server.requestedUris.first.queryParameters['accept-language'],
+        'en',
+      );
+    });
+
+    test(
+      'an unreachable Nominatim is reported, not answered natively',
+      () async {
+        final geocoding = _FakeGeocoding(
+          placemarks: const [
+            Placemark(country: 'Spain', administrativeArea: 'Canarias'),
+          ],
+        );
+        GeocodingPlatformFactory.instance = _FakeGeocodingFactory(geocoding);
+
+        final result = await HttpOverrides.runZoned(
+          () => service.reverseGeocode(28.047, -16.72, languageCode: 'en'),
+          createHttpClient: (_) => ThrowingHttpClient(),
+        );
+
+        expect(result.networkFailed, isTrue);
+        expect(
+          geocoding.locales,
+          isEmpty,
+          reason: 'a native answer would carry the local region name',
+        );
+      },
+    );
   });
 
   group('LocationResult.place', () {
@@ -880,6 +1020,36 @@ void main() {
         expect(seenAt, [Duration.zero, const Duration(seconds: 1)]);
         expect(result?.bodyOfWater, 'L');
       });
+    });
+  });
+
+  group('normalizeGeocodedRegion', () {
+    test('passes a real region through, trimmed', () {
+      expect(normalizeGeocodedRegion('  Andalusia '), 'Andalusia');
+    });
+
+    test('nulls a known Nominatim pseudo-region, case-insensitively', () {
+      expect(normalizeGeocodedRegion('Metropolitan France'), isNull);
+      expect(normalizeGeocodedRegion('european netherlands'), isNull);
+    });
+
+    test('keeps a real region whose name contains the country', () {
+      expect(
+        normalizeGeocodedRegion('Île-de-France', country: 'France'),
+        'Île-de-France',
+      );
+    });
+
+    test('nulls a region equal to the country', () {
+      expect(
+        normalizeGeocodedRegion('Singapore', country: 'Singapore'),
+        isNull,
+      );
+    });
+
+    test('nulls empty and whitespace', () {
+      expect(normalizeGeocodedRegion(null), isNull);
+      expect(normalizeGeocodedRegion('   '), isNull);
     });
   });
 }

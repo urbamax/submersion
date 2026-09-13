@@ -524,12 +524,13 @@ G_DECLARE_FINAL_TYPE(LibdivecomputerPluginGasMix, libdivecomputer_plugin_gas_mix
  * index: field in this object.
  * o2_percent: field in this object.
  * he_percent: field in this object.
+ * usage: field in this object.
  *
  * Creates a new #GasMix object.
  *
  * Returns: a new #LibdivecomputerPluginGasMix
  */
-LibdivecomputerPluginGasMix* libdivecomputer_plugin_gas_mix_new(int64_t index, double o2_percent, double he_percent);
+LibdivecomputerPluginGasMix* libdivecomputer_plugin_gas_mix_new(int64_t index, double o2_percent, double he_percent, int64_t* usage);
 
 /**
  * libdivecomputer_plugin_gas_mix_get_index
@@ -560,6 +561,19 @@ double libdivecomputer_plugin_gas_mix_get_o2_percent(LibdivecomputerPluginGasMix
  * Returns: the field value.
  */
 double libdivecomputer_plugin_gas_mix_get_he_percent(LibdivecomputerPluginGasMix* object);
+
+/**
+ * libdivecomputer_plugin_gas_mix_get_usage
+ * @object: a #LibdivecomputerPluginGasMix.
+ *
+ * Gas usage from libdivecomputer's `dc_usage_t` (1=oxygen, 2=diluent,
+ * 3=sidemount); null when the computer reported no usage (DC_USAGE_NONE).
+ * Set on the gas mix itself, so it is available even when the mix has no
+ * tank/transmitter record.
+ *
+ * Returns: the field value.
+ */
+int64_t* libdivecomputer_plugin_gas_mix_get_usage(LibdivecomputerPluginGasMix* object);
 
 /**
  * LibdivecomputerPluginTankInfo:
@@ -1240,7 +1254,7 @@ typedef struct {
   void (*get_device_descriptors)(LibdivecomputerPluginDiveComputerHostApiResponseHandle* response_handle, gpointer user_data);
   void (*start_discovery)(LibdivecomputerPluginTransportType transport, LibdivecomputerPluginDiveComputerHostApiResponseHandle* response_handle, gpointer user_data);
   LibdivecomputerPluginDiveComputerHostApiStopDiscoveryResponse* (*stop_discovery)(gpointer user_data);
-  void (*start_download)(LibdivecomputerPluginDiscoveredDevice* device, const gchar* fingerprint, LibdivecomputerPluginDiveComputerHostApiResponseHandle* response_handle, gpointer user_data);
+  void (*start_download)(LibdivecomputerPluginDiscoveredDevice* device, const gchar* fingerprint, gboolean sync_clock, LibdivecomputerPluginDiveComputerHostApiResponseHandle* response_handle, gpointer user_data);
   LibdivecomputerPluginDiveComputerHostApiCancelDownloadResponse* (*cancel_download)(gpointer user_data);
   LibdivecomputerPluginDiveComputerHostApiSubmitPinCodeResponse* (*submit_pin_code)(const gchar* pin_code, gpointer user_data);
   LibdivecomputerPluginDiveComputerHostApiGetLibdivecomputerVersionResponse* (*get_libdivecomputer_version)(gpointer user_data);
@@ -1799,12 +1813,13 @@ LibdivecomputerPluginDiveComputerFlutterApiOnDiveDownloadedResponse* libdivecomp
  * @total_dives: parameter for this method.
  * @serial_number: (allow-none): parameter for this method.
  * @firmware_version: (allow-none): parameter for this method.
+ * @clock_sync_status: (allow-none): parameter for this method.
  * @cancellable: (allow-none): a #GCancellable or %NULL.
  * @callback: (scope async): (allow-none): a #GAsyncReadyCallback to call when the call is complete or %NULL to ignore the response.
  * @user_data: (closure): user data to pass to @callback.
  *
  */
-void libdivecomputer_plugin_dive_computer_flutter_api_on_download_complete(LibdivecomputerPluginDiveComputerFlutterApi* api, int64_t total_dives, const gchar* serial_number, const gchar* firmware_version, GCancellable* cancellable, GAsyncReadyCallback callback, gpointer user_data);
+void libdivecomputer_plugin_dive_computer_flutter_api_on_download_complete(LibdivecomputerPluginDiveComputerFlutterApi* api, int64_t total_dives, const gchar* serial_number, const gchar* firmware_version, const gchar* clock_sync_status, GCancellable* cancellable, GAsyncReadyCallback callback, gpointer user_data);
 
 /**
  * libdivecomputer_plugin_dive_computer_flutter_api_on_download_complete_finish:

@@ -67,6 +67,7 @@ class ConflictReferenceResolver {
   /// in `database.dart`. The rest are columns that hold another row's id
   /// without a declared Drift constraint (`Media.subscriptionId` and
   /// `connectorAccountId`, `DiveDiveTypes.diveTypeId`,
+  /// `SiteSiteTypes.siteTypeId`,
   /// `DivePlanSegments.switchToTankId`, `DiveProfileEvents.tankId`); they are
   /// listed here because the dialog can resolve them just as well, so verify
   /// those against their table rather than expecting a `references` clause.
@@ -80,6 +81,7 @@ class ConflictReferenceResolver {
     'siteId': 'diveSites',
     'tagId': 'tags',
     'diveTypeId': 'diveTypes',
+    'siteTypeId': 'siteTypes',
     'diverId': 'divers',
     'buddyId': 'buddies',
     'instructorId': 'buddies',
@@ -90,6 +92,7 @@ class ConflictReferenceResolver {
     'configId': 'cylinderConfigs',
     'computerId': 'diveComputers',
     'sourceId': 'diveDataSources',
+    'importedFileId': 'importedFiles',
     'tankId': 'diveTanks',
     'switchToTankId': 'divePlanTanks',
     'planId': 'divePlans',
@@ -132,6 +135,7 @@ class ConflictReferenceResolver {
     'presetName',
     'templateName',
     'sourceFileName',
+    'fileName',
     'caption',
     'originalFilename',
   ];

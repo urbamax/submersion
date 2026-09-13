@@ -52,10 +52,13 @@ enum TripSortField {
   const TripSortField(this.displayName, this.icon);
 }
 
-/// Sort fields for Equipment
+/// Sort fields for the Equipment page.
+///
+/// No `type` field: ordering by type is the separate primary axis of the
+/// shared `EquipmentArrangement` ("Order types by" in the sort sheet), which
+/// the page honours like every other gear surface.
 enum EquipmentSortField {
   name('Name', Icons.sort_by_alpha),
-  type('Type', Icons.category),
   purchaseDate('Purchase Date', Icons.shopping_bag),
   lastServiceDate('Last Service', Icons.build),
   serviceDue('Service Due', Icons.av_timer);
@@ -63,6 +66,23 @@ enum EquipmentSortField {
   final String displayName;
   final IconData icon;
   const EquipmentSortField(this.displayName, this.icon);
+}
+
+/// Sort fields for the items inside a gear list on a dive.
+///
+/// Distinct from [EquipmentSortField], which serves the Equipment page and
+/// carries a `serviceDue` field needing an urgency map the dive surfaces do
+/// not load. Type is absent here because ordering by type is the separate
+/// primary axis of an `EquipmentArrangement`.
+enum EquipmentItemSortField {
+  name('Name', Icons.sort_by_alpha),
+  purchaseDate('Purchase Date', Icons.shopping_bag),
+  dateAdded('Date Added', Icons.playlist_add),
+  lastServiceDate('Last Service', Icons.build);
+
+  final String displayName;
+  final IconData icon;
+  const EquipmentItemSortField(this.displayName, this.icon);
 }
 
 /// Sort fields for Buddies

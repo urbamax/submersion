@@ -140,10 +140,17 @@ class GasMix {
     required this.index,
     required this.o2Percent,
     required this.hePercent,
+    this.usage,
   });
   final int index;
   final double o2Percent;
   final double hePercent;
+
+  /// Gas usage from libdivecomputer's `dc_usage_t` (1=oxygen, 2=diluent,
+  /// 3=sidemount); null when the computer reported no usage (DC_USAGE_NONE).
+  /// Set on the gas mix itself, so it is available even when the mix has no
+  /// tank/transmitter record.
+  final int? usage;
 }
 
 class TankInfo {
@@ -278,7 +285,11 @@ abstract class DiveComputerHostApi {
   void stopDiscovery();
 
   @async
-  void startDownload(DiscoveredDevice device, String? fingerprint);
+  void startDownload(
+    DiscoveredDevice device,
+    String? fingerprint,
+    bool syncClock,
+  );
 
   void cancelDownload();
 
@@ -307,6 +318,7 @@ abstract class DiveComputerFlutterApi {
     int totalDives,
     String? serialNumber,
     String? firmwareVersion,
+    String? clockSyncStatus,
   );
   void onError(DiveComputerError error);
   void onPinCodeRequired(String deviceAddress);

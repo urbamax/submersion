@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'package:submersion/core/providers/provider.dart';
+import 'package:submersion/core/utils/number_display.dart';
 import 'package:submersion/core/utils/unit_formatter.dart';
+import 'package:submersion/features/equipment/domain/entities/equipment_finding.dart';
 import 'package:submersion/features/equipment/domain/entities/overdue_service_entry.dart';
 import 'package:submersion/features/equipment/domain/entities/service_clock_status.dart';
+import 'package:submersion/features/equipment/presentation/providers/equipment_condition_providers.dart';
 import 'package:submersion/features/equipment/presentation/providers/equipment_providers.dart';
+import 'package:submersion/features/equipment/presentation/utils/condition_finding_text.dart';
 import 'package:submersion/features/equipment/presentation/widgets/service_trigger_text.dart';
 import 'package:submersion/features/pre_dive/domain/entities/pre_dive_checklist_template.dart';
 import 'package:submersion/features/pre_dive/domain/entities/pre_dive_session.dart';
@@ -26,6 +30,15 @@ class SessionItemTile extends ConsumerWidget {
   final VoidCallback onAddNote;
   final VoidCallback onReset;
 
+  /// The source item's current value, when this is a cell linearity item
+  /// whose frozen air reading no longer matches it. Null means there is no
+  /// discrepancy to report.
+  ///
+  /// Supplied by the page, because a tile cannot see its siblings. The
+  /// frozen figure is never recomputed from this; a resolved item is an
+  /// audit record and only the diver may redo it.
+  final double? staleSourceValue;
+
   const SessionItemTile({
     super.key,
     required this.session,
@@ -37,6 +50,7 @@ class SessionItemTile extends ConsumerWidget {
     required this.onEditValue,
     required this.onAddNote,
     required this.onReset,
+    this.staleSourceValue,
   });
 
   /// The item's overdue-service entries to display, paired with the instant
@@ -74,11 +88,33 @@ class SessionItemTile extends ConsumerWidget {
     );
   }
 
+  /// Significant, undismissed condition findings on the item's gear
+  /// (condition phase 4b), live for a pending item only: the resolved
+  /// snapshot carries clocks, not findings. The master toggle and the
+  /// disabled rules apply here, at display time.
+  List<EquipmentFinding> _significantFindings(WidgetRef ref) {
+    if (item.state != PreDiveItemState.pending) return const [];
+    final equipmentId = item.equipmentId;
+    if (equipmentId == null) return const [];
+    final settings = ref.watch(settingsProvider);
+    if (!settings.conditionEngineEnabled) return const [];
+    final findings =
+        ref.watch(equipmentConditionProvider(equipmentId)).value ?? const [];
+    return [
+      for (final f in findings)
+        if (f.severity == ConditionSeverity.significant &&
+            f.dismissedAt == null &&
+            !settings.conditionDisabledRules.contains(f.ruleId.dbValue))
+          f,
+    ];
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final l10n = context.l10n;
     final (overdueEntries, overdueAsOf) = _overdueEntries(ref);
+    final significantFindings = _significantFindings(ref);
     final actionable = ChecklistSessionEngine.isItemActionable(
       session,
       sortedItems,
@@ -102,23 +138,77 @@ class SessionItemTile extends ConsumerWidget {
       PreDiveItemState.flagged => (Icons.flag, theme.colorScheme.error),
     };
 
-    final valueLine = item.itemType == PreDiveItemType.value
+    // A cell linearity item records a number just as a value item does, so
+    // it renders the same primary line and takes the same tap route.
+    final isValueLike =
+        item.itemType == PreDiveItemType.value || item.isCellLinearity;
+
+    final valueLine = isValueLike
         ? [
             if (item.valueLabel != null) item.valueLabel!,
             if (item.valueNumber != null)
-              '${item.valueNumber}${item.valueUnit == null ? '' : ' ${item.valueUnit}'}',
+              '${formatDecimalForDisplay(item.valueNumber!)}'
+                  '${item.valueUnit == null ? '' : ' ${item.valueUnit}'}',
           ].join(': ')
         : null;
+
+    // The full working, so the linearity result is readable from the list
+    // without opening the item. Rounding is applied here and nowhere else:
+    // the percentage itself is derived from the exact expected value.
+    final percent = item.linearityPercent;
+    final expected = item.expectedO2Millivolts;
+    final air = item.sourceValueNumber;
+    // Both numbers are localised so the diver reads their own decimal
+    // separator (#1684 did the value line above; this is the same bug on the
+    // same tile, tracked as #1682), but through different helpers, because
+    // they pin their precision differently.
+    //
+    // The air reading keeps the precision the diver entered, because it is
+    // their input and rounding it would show a figure they never typed, so it
+    // takes formatDecimalForDisplay. The expected value is derived and shown
+    // to a fixed 1 dp, which is formatFixedForDisplay's whole purpose.
+    final linearityLine = (percent != null && expected != null && air != null)
+        ? l10n.preDive_runner_linearityLine(
+            formatDecimalForDisplay(air),
+            formatFixedForDisplay(expected, 1),
+            percent.round().toString(),
+          )
+        : null;
+
+    // The advisory warning has to mark the number that actually breached its
+    // threshold. On a value item that is the recorded number itself, but on a
+    // linearity item the threshold is a percentage, so the amber belongs on
+    // the working line rather than on the O2 millivolts, which no threshold
+    // applies to.
+    final primaryOutOfRange = item.valueOutOfRange && !item.isCellLinearity;
 
     final subtitleChildren = <Widget>[
       if (valueLine != null && valueLine.isNotEmpty)
         Text(
           valueLine,
           style: theme.textTheme.bodyMedium?.copyWith(
+            color: primaryOutOfRange
+                ? Colors.amber.shade700
+                : theme.colorScheme.onSurfaceVariant,
+            fontWeight: primaryOutOfRange ? FontWeight.bold : null,
+          ),
+        ),
+      if (linearityLine != null)
+        Text(
+          linearityLine,
+          style: theme.textTheme.bodyMedium?.copyWith(
             color: item.valueOutOfRange
                 ? Colors.amber.shade700
                 : theme.colorScheme.onSurfaceVariant,
             fontWeight: item.valueOutOfRange ? FontWeight.bold : null,
+          ),
+        ),
+      if (staleSourceValue != null)
+        Text(
+          l10n.preDive_runner_sourceChanged,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontStyle: FontStyle.italic,
           ),
         ),
       if (item.note.isNotEmpty)
@@ -142,6 +232,25 @@ class SessionItemTile extends ConsumerWidget {
           Text(
             '${entry.kindName}: '
             '${formatServiceTriggerText(context, units: UnitFormatter(ref.watch(settingsProvider)), now: overdueAsOf, dueDate: entry.dueDate, divesSinceAnchor: entry.divesSinceAnchor, divesRemaining: entry.divesRemaining, hoursSinceAnchor: entry.hoursSinceAnchor, hoursRemaining: entry.hoursRemaining)}',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.error,
+            ),
+          ),
+      ],
+      // Same block, same tone, after the clocks: a significant condition
+      // finding is as informative as an overdue clock and just as much the
+      // diver's call.
+      if (significantFindings.isNotEmpty) ...[
+        Text(
+          l10n.preDive_runner_conditionFindings,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.error,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        for (final finding in significantFindings)
+          Text(
+            conditionFindingShortLabel(finding.ruleId, l10n),
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.error,
             ),
@@ -209,9 +318,7 @@ class SessionItemTile extends ConsumerWidget {
               ],
             ),
       enabled: actionable,
-      onTap: actionable
-          ? (item.itemType == PreDiveItemType.value ? onEditValue : onDone)
-          : null,
+      onTap: actionable ? (isValueLike ? onEditValue : onDone) : null,
     );
 
     return dimmed ? Opacity(opacity: 0.4, child: tile) : tile;

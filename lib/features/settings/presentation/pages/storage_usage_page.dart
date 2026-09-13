@@ -4,16 +4,23 @@ import 'package:submersion/core/providers/provider.dart';
 import 'package:submersion/core/services/storage/storage_category.dart';
 import 'package:submersion/core/utils/byte_format.dart';
 import 'package:submersion/features/settings/presentation/providers/storage_usage_providers.dart';
+import 'package:submersion/features/settings/presentation/widgets/unrecognized_backups_notice.dart';
 import 'package:submersion/l10n/l10n_extension.dart';
 
 /// Reports how many bytes the app holds on this device, by category.
 ///
-/// Read-only by design. Nothing on this page deletes anything: the categories
-/// that can be reclaimed today are reclaimed from the pages that already own
-/// that action, and the ones that cannot be reclaimed safely at all (exports
-/// live beside the database and are user-visible in the Files app; every backup
-/// is a full copy of the database) are shown here precisely so the user can
-/// decide for themselves.
+/// Measurement only. Nothing here deletes anything: the categories that can be
+/// reclaimed today are reclaimed from the pages that already own that action,
+/// and the ones that cannot be reclaimed safely at all (exports live beside the
+/// database and are user-visible in the Files app; every backup is a full copy
+/// of the database) are shown here precisely so the user can decide for
+/// themselves.
+///
+/// The one exception is [UnrecognizedBackupsNotice], which appears under the
+/// backups group when the history has lost track of a file. It still deletes
+/// nothing itself: it links to a page that explains which files are safe to
+/// remove, because a delete button beside a size row would be a one-tap
+/// irreversible action on what may be someone's only copy.
 class StorageUsagePage extends ConsumerWidget {
   const StorageUsagePage({super.key});
 
@@ -48,6 +55,8 @@ class StorageUsagePage extends ConsumerWidget {
               _GroupHeader(group: group),
               for (final category in grouped[group]!)
                 StorageUsageRow(category: category),
+              if (group == StorageGroup.backups)
+                const UnrecognizedBackupsNotice(),
             ],
           const SizedBox(height: 32),
         ],
@@ -140,6 +149,8 @@ class _GroupHeader extends StatelessWidget {
       StorageGroup.backups => l10n.settings_storageUsage_group_backups,
       StorageGroup.temporary => l10n.settings_storageUsage_group_temporary,
       StorageGroup.exports => l10n.settings_storageUsage_group_exports,
+      StorageGroup.importedFiles =>
+        l10n.settings_storageUsage_group_importedFiles,
     };
   }
 }
@@ -204,6 +215,8 @@ class StorageUsageRow extends ConsumerWidget {
       StorageCategoryId.temporary =>
         l10n.settings_storageUsage_category_temporary,
       StorageCategoryId.exports => l10n.settings_storageUsage_category_exports,
+      StorageCategoryId.importedFiles =>
+        l10n.settings_storageUsage_category_importedFiles,
       _ => id,
     };
   }

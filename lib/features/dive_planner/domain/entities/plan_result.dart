@@ -1,8 +1,11 @@
 import 'package:equatable/equatable.dart';
 
+import 'package:submersion/core/constants/enums.dart';
 import 'package:submersion/core/deco/entities/tissue_compartment.dart';
+import 'package:submersion/core/deco/schedule_policy.dart' show AirBreakPolicy;
 import 'package:submersion/features/dive_log/domain/entities/dive.dart';
 import 'package:submersion/features/dive_planner/domain/entities/plan_segment.dart';
+import 'package:submersion/features/equipment/domain/entities/gear_provenance.dart';
 import 'package:submersion/features/planner/domain/entities/dive_plan.dart'
     show PlanMode, TurnPressureRule;
 
@@ -493,6 +496,10 @@ class DivePlanState extends Equatable {
   /// Surface air consumption rate in L/min.
   final double sacRate;
 
+  /// Deco SAC in L/min; null = the 0.8x-of-bottom fallback (Subsurface "Deco
+  /// SAC"). Mirrors [DivePlan.sacDeco].
+  final double? sacDeco;
+
   /// Working ascent rate in meters per minute: off the bottom, up to the
   /// first decompression stop.
   final double ascentRate;
@@ -514,6 +521,10 @@ class DivePlanState extends Equatable {
   /// Descent rate in meters per minute.
   final double descentRate;
 
+  /// Air-break (back-gas break) policy for long O2 deco stops; null = no
+  /// air breaks.
+  final AirBreakPolicy? airBreaks;
+
   /// Surface interval before this dive (for repetitive diving).
   final Duration? surfaceInterval;
 
@@ -531,6 +542,14 @@ class DivePlanState extends Equatable {
 
   /// Altitude above sea level in meters (for altitude diving).
   final double? altitude;
+
+  /// Water type for decompression (density). Null falls back to salt water,
+  /// the planner default - not EN13319 - and is overridden by [salinityPpt].
+  final WaterType? waterType;
+
+  /// Custom salinity in ppt. When set, this wins over [waterType] for deco
+  /// density.
+  final double? salinityPpt;
 
   /// Planned start time; null = "now". Drives repetitive tissue init (v120).
   final DateTime? startDateTime;
@@ -556,8 +575,56 @@ class DivePlanState extends Equatable {
   /// Reserve pressure in bar.
   final double reservePressure;
 
+  /// Multiplier on the stressed-SAC fallback for the minimum-gas / rock-
+  /// bottom calculation. Mirrors [DivePlan.sacFactor]. Subsurface default: 2.
+  final double sacFactor;
+
+  /// Minutes at max depth at the stressed SAC before the ascent begins, in
+  /// the minimum-gas calculation. Mirrors [DivePlan.problemSolvingMinutes].
+  final int problemSolvingMinutes;
+
+  /// ppO2 ceiling for the working part of the dive; null = use the app-wide
+  /// setting. Mirrors [DivePlan.ppO2Bottom].
+  final double? ppO2Bottom;
+
+  /// ppO2 ceiling for deco gas switch depths and stop gas selection; null =
+  /// use the app-wide setting. Mirrors [DivePlan.ppO2Deco].
+  final double? ppO2Deco;
+
+  /// Equivalent narcotic depth target for best-mix suggestions. Mirrors
+  /// [DivePlan.bestMixEndMeters]. Subsurface default: 30 m.
+  final double bestMixEndMeters;
+
+  /// Whether O2 counts as narcotic in END for this plan; null = use the
+  /// app-wide setting. Mirrors [DivePlan.o2Narcotic].
+  final bool? o2Narcotic;
+
+  /// Diver-authored minimum hold time in seconds, keyed by whole-metre stop
+  /// depth. Mirrors [DivePlan.stopMinimums]; wired into the engine via
+  /// [SchedulePolicy.minStopSecondsByDepth] rather than baking a fixed stop
+  /// into [segments].
+  final Map<int, int> stopMinimums;
+
   /// Equipment attached to the plan (Gear & Weights, v104).
   final List<String> equipmentIds;
+
+  /// Where each id in [equipmentIds] came from (issue #1487): the assembly
+  /// it was attached through and the set applied.
+  final List<GearProvenance> gearProvenance;
+
+  /// One provenance row per attached id, in [equipmentIds] order. An id
+  /// with no row (a state assembled before provenance existed) is a loose
+  /// top-level row. Readers that walk the tree must use this rather than
+  /// [gearProvenance]: a missing assembly row would leave its parts as
+  /// orphans with nothing rolled up, and buoyancy would count the assembly
+  /// and its parts.
+  List<GearProvenance> get fullGearProvenance {
+    final byId = {for (final p in gearProvenance) p.equipmentId: p};
+    return [
+      for (final id in equipmentIds)
+        byId[id] ?? GearProvenance(equipmentId: id),
+    ];
+  }
 
   /// Accepted weight-prediction snapshot; placement keyed by
   /// WeightType.name -> kg.
@@ -584,18 +651,22 @@ class DivePlanState extends Equatable {
     this.gfLow = kFallbackGfLow,
     this.gfHigh = kFallbackGfHigh,
     this.sacRate = 15.0,
+    this.sacDeco,
     this.ascentRate = 9.0,
     this.intermediateAscentRate = 6.0,
     this.shallowAscentRate = 3.0,
     this.finalAscentRate = 1.0,
     this.lastStopDepth = 3.0,
     this.descentRate = 18.0,
+    this.airBreaks,
     this.surfaceInterval,
     this.initialTissueState,
     this.sourceDiveId,
     this.linkedDiveId,
     this.siteId,
     this.altitude,
+    this.waterType,
+    this.salinityPpt,
     this.startDateTime,
     this.mode = PlanMode.oc,
     this.setpointLow,
@@ -606,7 +677,15 @@ class DivePlanState extends Equatable {
     this.turnPressureRule,
     this.turnPressureFraction,
     this.reservePressure = kDefaultReservePressureBar,
+    this.sacFactor = 2.0,
+    this.problemSolvingMinutes = 2,
+    this.ppO2Bottom,
+    this.ppO2Deco,
+    this.bestMixEndMeters = 30.0,
+    this.o2Narcotic,
+    this.stopMinimums = const {},
     this.equipmentIds = const [],
+    this.gearProvenance = const [],
     this.plannedWeightKg,
     this.plannedWeightPlacement,
     this.notes = '',
@@ -653,18 +732,23 @@ class DivePlanState extends Equatable {
     int? gfLow,
     int? gfHigh,
     double? sacRate,
+    double? sacDeco,
+    bool clearSacDeco = false,
     double? ascentRate,
     double? intermediateAscentRate,
     double? shallowAscentRate,
     double? finalAscentRate,
     double? lastStopDepth,
     double? descentRate,
+    AirBreakPolicy? airBreaks,
     Duration? surfaceInterval,
     List<TissueCompartment>? initialTissueState,
     String? sourceDiveId,
     String? linkedDiveId,
     String? siteId,
     double? altitude,
+    WaterType? waterType,
+    double? salinityPpt,
     DateTime? startDateTime,
     bool clearStartDateTime = false,
     PlanMode? mode,
@@ -677,7 +761,18 @@ class DivePlanState extends Equatable {
     double? turnPressureFraction,
     bool clearTurnPressureRule = false,
     double? reservePressure,
+    double? sacFactor,
+    int? problemSolvingMinutes,
+    double? ppO2Bottom,
+    bool clearPpO2Bottom = false,
+    double? ppO2Deco,
+    bool clearPpO2Deco = false,
+    double? bestMixEndMeters,
+    bool? o2Narcotic,
+    bool clearO2Narcotic = false,
+    Map<int, int>? stopMinimums,
     List<String>? equipmentIds,
+    List<GearProvenance>? gearProvenance,
     double? plannedWeightKg,
     Map<String, double>? plannedWeightPlacement,
     bool clearPlannedWeight = false,
@@ -691,7 +786,10 @@ class DivePlanState extends Equatable {
     bool clearLinkedDiveId = false,
     bool clearSiteId = false,
     bool clearAltitude = false,
+    bool clearWaterType = false,
+    bool clearSalinityPpt = false,
     bool clearSetpoints = false,
+    bool clearAirBreaks = false,
   }) {
     return DivePlanState(
       id: id ?? this.id,
@@ -701,6 +799,7 @@ class DivePlanState extends Equatable {
       gfLow: gfLow ?? this.gfLow,
       gfHigh: gfHigh ?? this.gfHigh,
       sacRate: sacRate ?? this.sacRate,
+      sacDeco: clearSacDeco ? null : (sacDeco ?? this.sacDeco),
       ascentRate: ascentRate ?? this.ascentRate,
       intermediateAscentRate:
           intermediateAscentRate ?? this.intermediateAscentRate,
@@ -708,6 +807,7 @@ class DivePlanState extends Equatable {
       finalAscentRate: finalAscentRate ?? this.finalAscentRate,
       lastStopDepth: lastStopDepth ?? this.lastStopDepth,
       descentRate: descentRate ?? this.descentRate,
+      airBreaks: clearAirBreaks ? null : (airBreaks ?? this.airBreaks),
       surfaceInterval: clearSurfaceInterval
           ? null
           : (surfaceInterval ?? this.surfaceInterval),
@@ -722,6 +822,8 @@ class DivePlanState extends Equatable {
           : (linkedDiveId ?? this.linkedDiveId),
       siteId: clearSiteId ? null : (siteId ?? this.siteId),
       altitude: clearAltitude ? null : (altitude ?? this.altitude),
+      waterType: clearWaterType ? null : (waterType ?? this.waterType),
+      salinityPpt: clearSalinityPpt ? null : (salinityPpt ?? this.salinityPpt),
       startDateTime: clearStartDateTime
           ? null
           : (startDateTime ?? this.startDateTime),
@@ -740,7 +842,16 @@ class DivePlanState extends Equatable {
           ? null
           : (turnPressureFraction ?? this.turnPressureFraction),
       reservePressure: reservePressure ?? this.reservePressure,
+      sacFactor: sacFactor ?? this.sacFactor,
+      problemSolvingMinutes:
+          problemSolvingMinutes ?? this.problemSolvingMinutes,
+      ppO2Bottom: clearPpO2Bottom ? null : (ppO2Bottom ?? this.ppO2Bottom),
+      ppO2Deco: clearPpO2Deco ? null : (ppO2Deco ?? this.ppO2Deco),
+      bestMixEndMeters: bestMixEndMeters ?? this.bestMixEndMeters,
+      o2Narcotic: clearO2Narcotic ? null : (o2Narcotic ?? this.o2Narcotic),
+      stopMinimums: stopMinimums ?? this.stopMinimums,
       equipmentIds: equipmentIds ?? this.equipmentIds,
+      gearProvenance: gearProvenance ?? this.gearProvenance,
       plannedWeightKg: clearPlannedWeight
           ? null
           : (plannedWeightKg ?? this.plannedWeightKg),
@@ -763,18 +874,23 @@ class DivePlanState extends Equatable {
     gfLow,
     gfHigh,
     sacRate,
+    sacDeco,
     ascentRate,
     intermediateAscentRate,
     shallowAscentRate,
     finalAscentRate,
     lastStopDepth,
     descentRate,
+    airBreaks?.o2Seconds,
+    airBreaks?.breakSeconds,
     surfaceInterval,
     initialTissueState,
     sourceDiveId,
     linkedDiveId,
     siteId,
     altitude,
+    waterType,
+    salinityPpt,
     startDateTime,
     mode,
     setpointLow,
@@ -785,7 +901,15 @@ class DivePlanState extends Equatable {
     turnPressureRule,
     turnPressureFraction,
     reservePressure,
+    sacFactor,
+    problemSolvingMinutes,
+    ppO2Bottom,
+    ppO2Deco,
+    bestMixEndMeters,
+    o2Narcotic,
+    stopMinimums,
     equipmentIds,
+    gearProvenance,
     plannedWeightKg,
     plannedWeightPlacement,
     notes,

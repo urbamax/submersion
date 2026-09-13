@@ -255,7 +255,14 @@ data class ProfileSample (
 data class GasMix (
   val index: Long,
   val o2Percent: Double,
-  val hePercent: Double
+  val hePercent: Double,
+  /**
+   * Gas usage from libdivecomputer's `dc_usage_t` (1=oxygen, 2=diluent,
+   * 3=sidemount); null when the computer reported no usage (DC_USAGE_NONE).
+   * Set on the gas mix itself, so it is available even when the mix has no
+   * tank/transmitter record.
+   */
+  val usage: Long? = null
 )
  {
   companion object {
@@ -263,7 +270,8 @@ data class GasMix (
       val index = pigeonVar_list[0] as Long
       val o2Percent = pigeonVar_list[1] as Double
       val hePercent = pigeonVar_list[2] as Double
-      return GasMix(index, o2Percent, hePercent)
+      val usage = pigeonVar_list[3] as Long?
+      return GasMix(index, o2Percent, hePercent, usage)
     }
   }
   fun toList(): List<Any?> {
@@ -271,6 +279,7 @@ data class GasMix (
       index,
       o2Percent,
       hePercent,
+      usage,
     )
   }
 }
@@ -600,7 +609,7 @@ interface DiveComputerHostApi {
   fun getDeviceDescriptors(callback: (Result<List<DeviceDescriptor>>) -> Unit)
   fun startDiscovery(transport: TransportType, callback: (Result<Unit>) -> Unit)
   fun stopDiscovery()
-  fun startDownload(device: DiscoveredDevice, fingerprint: String?, callback: (Result<Unit>) -> Unit)
+  fun startDownload(device: DiscoveredDevice, fingerprint: String?, syncClock: Boolean, callback: (Result<Unit>) -> Unit)
   fun cancelDownload()
   fun submitPinCode(pinCode: String)
   fun getLibdivecomputerVersion(): String
@@ -675,7 +684,8 @@ interface DiveComputerHostApi {
             val args = message as List<Any?>
             val deviceArg = args[0] as DiscoveredDevice
             val fingerprintArg = args[1] as String?
-            api.startDownload(deviceArg, fingerprintArg) { result: Result<Unit> ->
+            val syncClockArg = args[2] as Boolean
+            api.startDownload(deviceArg, fingerprintArg, syncClockArg) { result: Result<Unit> ->
               val error = result.exceptionOrNull()
               if (error != null) {
                 reply.reply(wrapError(error))
@@ -839,12 +849,12 @@ class DiveComputerFlutterApi(private val binaryMessenger: BinaryMessenger, priva
       } 
     }
   }
-  fun onDownloadComplete(totalDivesArg: Long, serialNumberArg: String?, firmwareVersionArg: String?, callback: (Result<Unit>) -> Unit)
+  fun onDownloadComplete(totalDivesArg: Long, serialNumberArg: String?, firmwareVersionArg: String?, clockSyncStatusArg: String?, callback: (Result<Unit>) -> Unit)
 {
     val separatedMessageChannelSuffix = if (messageChannelSuffix.isNotEmpty()) ".$messageChannelSuffix" else ""
     val channelName = "dev.flutter.pigeon.libdivecomputer_plugin.DiveComputerFlutterApi.onDownloadComplete$separatedMessageChannelSuffix"
     val channel = BasicMessageChannel<Any?>(binaryMessenger, channelName, codec)
-    channel.send(listOf(totalDivesArg, serialNumberArg, firmwareVersionArg)) {
+    channel.send(listOf(totalDivesArg, serialNumberArg, firmwareVersionArg, clockSyncStatusArg)) {
       if (it is List<*>) {
         if (it.size > 1) {
           callback(Result.failure(FlutterError(it[0] as String, it[1] as String, it[2] as String?)))

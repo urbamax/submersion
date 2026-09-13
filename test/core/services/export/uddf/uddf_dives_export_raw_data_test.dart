@@ -6,6 +6,7 @@ import 'package:submersion/core/services/export/models/uddf_export_options.dart'
 import 'package:submersion/core/services/export/uddf/uddf_export_service.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive_source_export.dart';
+import 'package:submersion/features/equipment/domain/entities/gear_link.dart';
 
 void main() {
   final dive = Dive(
@@ -20,7 +21,7 @@ void main() {
     diveComputerSerial: 'SN123',
     tanks: const [],
     profile: const [],
-    equipment: const [],
+    gear: looseGear(const []),
     notes: '',
     photoIds: const [],
     sightings: const [],
@@ -44,21 +45,43 @@ void main() {
     descriptorModel: 5,
   );
 
-  test('emits the dive link but no computer link', () async {
+  test('links the dump to the computer the export declares', () async {
     final xml = await UddfExportService().generateDivesUddfContent(
       [dive],
       dataSources: [source],
     );
     final doc = XmlDocument.parse(xml);
 
-    // This path declares no <divecomputer> at all, so any computer ref would
-    // dangle under IDREF validation.
-    expect(doc.findAllElements('divecomputer'), isEmpty);
+    expect(
+      doc.findAllElements('divecomputer').single.getAttribute('id'),
+      'dc_Perdix_AI_SN123',
+    );
     final dump = doc.findAllElements('divecomputerdump').single;
     expect(dump.findElements('link').map((e) => e.getAttribute('ref')), [
       'dive_dive-1',
+      'dc_Perdix_AI_SN123',
     ]);
   });
+
+  test(
+    'without gear it declares no computer, so links only the dive',
+    () async {
+      final xml = await UddfExportService().generateDivesUddfContent(
+        [dive],
+        dataSources: [source],
+        options: const UddfExportOptions(includeGear: false),
+      );
+      final doc = XmlDocument.parse(xml);
+
+      // No <divecomputer> is declared, so any computer ref would dangle under
+      // IDREF validation.
+      expect(doc.findAllElements('divecomputer'), isEmpty);
+      final dump = doc.findAllElements('divecomputerdump').single;
+      expect(dump.findElements('link').map((e) => e.getAttribute('ref')), [
+        'dive_dive-1',
+      ]);
+    },
+  );
 
   test(
     'hosts the source record in its own top level applicationdata',

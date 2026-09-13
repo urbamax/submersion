@@ -9,6 +9,8 @@ import 'package:submersion/features/dive_centers/domain/entities/dive_center.dar
 import 'package:submersion/features/dive_sites/domain/entities/dive_site.dart';
 import 'package:submersion/features/dive_types/domain/entities/dive_type_entity.dart';
 import 'package:submersion/features/equipment/domain/entities/equipment_item.dart';
+import 'package:submersion/features/equipment/domain/entities/gear_link.dart';
+import 'package:submersion/features/equipment/domain/entities/gear_provenance.dart';
 import 'package:submersion/features/tags/domain/entities/tag.dart';
 import 'package:submersion/features/trips/domain/entities/trip.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive_custom_field.dart';
@@ -38,7 +40,20 @@ class Dive extends Equatable {
   final String? tripId;
   final List<DiveTank> tanks;
   final List<DiveProfilePoint> profile;
-  final List<EquipmentItem> equipment;
+
+  /// The gear on this dive, one link per junction row with the item and
+  /// where it came from (issue #1487). [equipment] is the flat view.
+  final List<GearLink> gear;
+
+  /// The gear as a flat item list, for readers that do not care about
+  /// assemblies or sets.
+  List<EquipmentItem> get equipment => [for (final g in gear) g.item];
+
+  /// Provenance only, the shape the expander and the tree helpers take.
+  List<GearProvenance> get gearProvenance => [
+    for (final g in gear) g.provenance,
+  ];
+
   final String notes;
   final List<String> photoIds;
   final List<MarineSighting> sightings;
@@ -207,7 +222,7 @@ class Dive extends Equatable {
     this.tripId,
     this.tanks = const [],
     this.profile = const [],
-    this.equipment = const [],
+    this.gear = const [],
     this.notes = '',
     this.photoIds = const [],
     this.sightings = const [],
@@ -338,6 +353,25 @@ class Dive extends Equatable {
   /// Display names for all of this dive's types.
   List<String> get diveTypeNames =>
       diveTypeIds.map(diveTypeDisplayName).toList();
+
+  /// The names the diver gave this dive's types, looked up in [typesById]
+  /// (the loaded `dive_types` rows), then in [diveType] for the first id.
+  ///
+  /// [diveTypeNames] can only rebuild a name from its id, which loses a
+  /// custom type's own spelling: `Search & Recovery` is stored as
+  /// `search_recovery` and a colliding second type gains a suffix (#1834).
+  /// An id with no loaded row, or a blank name, falls back to that form.
+  List<String> diveTypeNamesFrom(Map<String, DiveTypeEntity> typesById) => [
+    for (final id in diveTypeIds)
+      _nonBlankName(typesById[id]) ??
+          (diveType?.id == id ? _nonBlankName(diveType) : null) ??
+          diveTypeDisplayName(id),
+  ];
+
+  static String? _nonBlankName(DiveTypeEntity? type) {
+    final name = type?.name.trim();
+    return (name == null || name.isEmpty) ? null : name;
+  }
 
   /// Capitalize a slug for display, e.g. 'deep_wreck' -> 'Deep wreck'.
   static String diveTypeDisplayName(String id) {
@@ -512,7 +546,9 @@ class Dive extends Equatable {
   /// ascent (US Navy convention): the descent counts; stops shallower
   /// than the depth threshold (safety stops, shallow deco) do not, while
   /// deeper stops still count. See [BottomTimeCalculator] for the
-  /// threshold rule.
+  /// threshold rule. The result is bounded by [runtime] when one is set,
+  /// so a profile that outlasts the dive cannot report a bottom time longer
+  /// than the dive itself.
   ///
   /// Returns null if profile data is insufficient for calculation.
   Duration? calculateBottomTimeFromProfile() {
@@ -592,7 +628,7 @@ class Dive extends Equatable {
     String? tripId,
     List<DiveTank>? tanks,
     List<DiveProfilePoint>? profile,
-    List<EquipmentItem>? equipment,
+    List<GearLink>? gear,
     String? notes,
     List<String>? photoIds,
     List<MarineSighting>? sightings,
@@ -690,7 +726,7 @@ class Dive extends Equatable {
       tripId: tripId ?? this.tripId,
       tanks: tanks ?? this.tanks,
       profile: profile ?? this.profile,
-      equipment: equipment ?? this.equipment,
+      gear: gear ?? this.gear,
       notes: notes ?? this.notes,
       photoIds: photoIds ?? this.photoIds,
       sightings: sightings ?? this.sightings,
@@ -791,7 +827,7 @@ class Dive extends Equatable {
     tripId,
     tanks,
     profile,
-    equipment,
+    gear,
     notes,
     photoIds,
     sightings,
@@ -1075,6 +1111,25 @@ class DiveTank extends Equatable {
   /// transmitter, whatever gas mix each computer had programmed.
   final String? transmitterSerial;
 
+  /// Parsed tank index this row's computer-owned data comes from (v200). Null
+  /// on rows from before v200 means "same as order"; -1 (kNoSourceTankIndex
+  /// in tank_source_index.dart) means the row takes no parsed tank.
+  /// Computer-owned identity, like [computerId] and [transmitterSerial]:
+  /// user edits never rewrite it.
+  final int? sourceTankIndex;
+
+  /// The regulator this cylinder was breathed through (v202), so high-O2
+  /// contact reaches the regulator's service clocks. User-authored: the
+  /// tank editor sets it and downloads never touch it.
+  final String? regulatorEquipmentId;
+
+  /// The gear item this cylinder is (the `dive_tanks.equipment_id` link the
+  /// transmitter registry writes when a serial is assigned to an item).
+  /// Read-only on the domain side: edit flows rebuild the tank field by
+  /// field and never write it, like [computerId], so a rebuild that forgot
+  /// it cannot wipe what the registry recorded.
+  final String? equipmentId;
+
   /// Deco gas-switch depth override in meters (planning only); null = auto
   /// (MOD at the deco pO2). Subsurface per-cylinder "Deco switch at", v120.
   /// Unused for logged-dive tanks.
@@ -1102,6 +1157,9 @@ class DiveTank extends Equatable {
     this.presetName,
     this.computerId,
     this.transmitterSerial,
+    this.sourceTankIndex,
+    this.regulatorEquipmentId,
+    this.equipmentId,
     this.decoSwitchDepth,
     this.isTravelGas = false,
   });
@@ -1130,6 +1188,11 @@ class DiveTank extends Equatable {
     String? computerId,
     String? transmitterSerial,
     bool clearTransmitterSerial = false,
+    int? sourceTankIndex,
+    bool clearSourceTankIndex = false,
+    String? regulatorEquipmentId,
+    String? equipmentId,
+    bool clearRegulatorEquipmentId = false,
     double? decoSwitchDepth,
     bool clearDecoSwitchDepth = false,
     bool? isTravelGas,
@@ -1150,6 +1213,13 @@ class DiveTank extends Equatable {
       transmitterSerial: clearTransmitterSerial
           ? null
           : (transmitterSerial ?? this.transmitterSerial),
+      sourceTankIndex: clearSourceTankIndex
+          ? null
+          : (sourceTankIndex ?? this.sourceTankIndex),
+      regulatorEquipmentId: clearRegulatorEquipmentId
+          ? null
+          : (regulatorEquipmentId ?? this.regulatorEquipmentId),
+      equipmentId: equipmentId ?? this.equipmentId,
       decoSwitchDepth: clearDecoSwitchDepth
           ? null
           : (decoSwitchDepth ?? this.decoSwitchDepth),
@@ -1172,6 +1242,9 @@ class DiveTank extends Equatable {
     presetName,
     computerId,
     transmitterSerial,
+    sourceTankIndex,
+    regulatorEquipmentId,
+    equipmentId,
     decoSwitchDepth,
     isTravelGas,
   ];

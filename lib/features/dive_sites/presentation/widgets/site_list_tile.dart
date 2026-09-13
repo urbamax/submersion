@@ -9,6 +9,7 @@ import 'package:submersion/features/dive_sites/domain/constants/site_field.dart'
 import 'package:submersion/features/dive_sites/domain/entities/site_with_dive_count.dart';
 import 'package:submersion/features/dive_sites/presentation/providers/site_providers.dart';
 import 'package:submersion/features/dive_sites/presentation/site_difficulty_display.dart';
+import 'package:submersion/features/site_types/presentation/site_type_display.dart';
 import 'package:submersion/features/maps/data/services/tile_cache_service.dart';
 import 'package:submersion/features/maps/presentation/providers/map_tile_providers.dart';
 import 'package:submersion/features/maps/presentation/widgets/map_attribution.dart';
@@ -17,6 +18,7 @@ import 'package:submersion/features/settings/presentation/providers/settings_pro
 import 'package:submersion/features/site_scape/presentation/site_feature_glyph.dart';
 import 'package:submersion/features/site_scape/presentation/site_feature_sheet.dart';
 import 'package:submersion/l10n/l10n_extension.dart';
+import 'package:submersion/shared/selection/selection_inset.dart';
 import 'package:submersion/shared/selection/selection_leading.dart';
 import 'package:submersion/shared/widgets/entity_card/card_slot_resolver.dart';
 import 'package:submersion/shared/widgets/entity_card/entity_card_extra_fields.dart';
@@ -134,6 +136,9 @@ class _SiteListTileState extends ConsumerState<SiteListTile> {
     }
 
     final chipTextColor = primaryTextColor ?? colorScheme.onSurface;
+    final typeIds = {for (final t in entry.siteTypes) t.id};
+    final shownTags = entry.tags.take(3).toList();
+    final hiddenTagCount = entry.tags.length - shownTags.length;
     final chips = <Widget>[
       if (site.difficulty != null)
         _SiteChip(
@@ -149,11 +154,36 @@ class _SiteListTileState extends ConsumerState<SiteListTile> {
           color: statColor,
           textColor: chipTextColor,
         ),
-      for (final typeName in entry.featureTypes)
+      // Site types (issue #1765) before feature pins.
+      for (final type in entry.siteTypes)
         _SiteChip(
-          icon: SiteFeatureGlyph.styleFor(typeName).$1,
-          label: siteFeatureTypeLabel(l10n, typeName),
-          color: SiteFeatureGlyph.styleFor(typeName).$2,
+          icon: Icons.category_outlined,
+          label: type.localizedName(l10n),
+          color: statColor,
+          textColor: chipTextColor,
+        ),
+      // A wreck pin on a site typed wreck would read "Wreck Wreck".
+      for (final typeName in entry.featureTypes)
+        if (!(typeName == 'wreck' && typeIds.contains('wreck')))
+          _SiteChip(
+            icon: SiteFeatureGlyph.styleFor(typeName).$1,
+            label: siteFeatureTypeLabel(l10n, typeName),
+            color: SiteFeatureGlyph.styleFor(typeName).$2,
+            textColor: chipTextColor,
+          ),
+      // Tags (issue #1765): the first three, then a count of the rest.
+      for (final tag in shownTags)
+        _SiteChip(
+          icon: Icons.sell_outlined,
+          label: tag.name,
+          color: tag.color,
+          textColor: chipTextColor,
+        ),
+      if (hiddenTagCount > 0)
+        _SiteChip(
+          icon: Icons.sell_outlined,
+          label: l10n.diveSites_list_moreTags(hiddenTagCount),
+          color: statColor,
           textColor: chipTextColor,
         ),
     ];
@@ -166,22 +196,20 @@ class _SiteListTileState extends ConsumerState<SiteListTile> {
           children: [
             Row(
               children: [
-                SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: Center(
-                    child: SelectionLeading(
-                      isSelectionMode: widget.isSelectionMode,
-                      isChecked: widget.isChecked,
-                      onChanged: (_) => widget.onTap?.call(),
-                      child: CircleAvatar(
-                        backgroundColor:
-                            accent?.withValues(alpha: 0.15) ??
-                            colorScheme.secondaryContainer,
-                        child: Icon(
-                          Icons.location_on,
-                          color: accent ?? colorScheme.onSecondaryContainer,
-                        ),
+                SelectionLeading(
+                  isSelectionMode: widget.isSelectionMode,
+                  isChecked: widget.isChecked,
+                  onChanged: (_) => widget.onTap?.call(),
+                  child: SizedBox(
+                    width: 40,
+                    height: 40,
+                    child: CircleAvatar(
+                      backgroundColor:
+                          accent?.withValues(alpha: 0.15) ??
+                          colorScheme.secondaryContainer,
+                      child: Icon(
+                        Icons.location_on,
+                        color: accent ?? colorScheme.onSecondaryContainer,
                       ),
                     ),
                   ),
@@ -193,6 +221,9 @@ class _SiteListTileState extends ConsumerState<SiteListTile> {
                     children: [
                       Row(
                         children: [
+                          // No ellipsis: a long title wraps, like the trip
+                          // and equipment cards, so the full name is always
+                          // visible.
                           Expanded(
                             child: Text(
                               title,
@@ -201,8 +232,6 @@ class _SiteListTileState extends ConsumerState<SiteListTile> {
                                     fontWeight: FontWeight.w600,
                                     color: primaryTextColor,
                                   ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                           if (site.rating != null) ...[
@@ -253,8 +282,9 @@ class _SiteListTileState extends ConsumerState<SiteListTile> {
               ],
             ),
             const SizedBox(height: 6),
-            Padding(
-              padding: const EdgeInsetsDirectional.only(start: _contentInset),
+            SelectionInset(
+              isSelectionMode: widget.isSelectionMode,
+              start: _contentInset,
               child: Wrap(
                 crossAxisAlignment: WrapCrossAlignment.center,
                 spacing: 16,
@@ -264,15 +294,17 @@ class _SiteListTileState extends ConsumerState<SiteListTile> {
             ),
             if (chips.isNotEmpty) ...[
               const SizedBox(height: 6),
-              Padding(
-                padding: const EdgeInsetsDirectional.only(start: _contentInset),
+              SelectionInset(
+                isSelectionMode: widget.isSelectionMode,
+                start: _contentInset,
                 child: Wrap(spacing: 6, runSpacing: 4, children: chips),
               ),
             ],
             if (config.extraFields.isNotEmpty) ...[
               const SizedBox(height: 4),
-              Padding(
-                padding: const EdgeInsetsDirectional.only(start: _contentInset),
+              SelectionInset(
+                isSelectionMode: widget.isSelectionMode,
+                start: _contentInset,
                 child: EntityCardExtraFields<SiteWithDiveCount, SiteField>(
                   adapter: adapter,
                   entity: entry,
@@ -325,9 +357,10 @@ class _SiteListTileState extends ConsumerState<SiteListTile> {
                           urlTemplate: ref.watch(mapTileUrlProvider),
                           userAgentPackageName: 'app.submersion',
                           maxZoom: ref.watch(mapTileMaxZoomProvider),
-                          tileProvider: TileCacheService.instance.isInitialized
-                              ? TileCacheService.instance.getTileProvider()
-                              : null,
+                          tileProvider: TileCacheService.instance
+                              .tileProviderFor(
+                                urlTemplate: ref.watch(mapTileUrlProvider),
+                              ),
                         ),
                         const MapAttribution(),
                       ],

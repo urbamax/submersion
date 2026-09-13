@@ -19,6 +19,7 @@ import 'package:submersion/features/dive_log/data/repositories/dive_repository_i
 import 'package:submersion/features/dive_log/data/repositories/tank_pressure_repository.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart'
     as domain_dive;
+import 'package:submersion/features/dive_roles/data/repositories/dive_role_repository.dart';
 import 'package:submersion/features/dive_sites/data/repositories/site_repository_impl.dart';
 import 'package:submersion/features/dive_types/data/repositories/dive_type_repository.dart';
 import 'package:submersion/features/divers/data/repositories/diver_repository.dart';
@@ -26,6 +27,9 @@ import 'package:submersion/features/divers/domain/entities/diver.dart'
     as domain;
 import 'package:submersion/features/equipment/data/repositories/equipment_repository_impl.dart';
 import 'package:submersion/features/equipment/data/repositories/equipment_set_repository_impl.dart';
+import 'package:submersion/features/equipment/domain/entities/gear_link.dart';
+import 'package:submersion/features/dive_sites/data/repositories/site_classification_repository.dart';
+import 'package:submersion/features/site_types/data/repositories/site_type_repository.dart';
 import 'package:submersion/features/tags/data/repositories/tag_repository.dart';
 import 'package:submersion/features/trips/data/repositories/trip_repository.dart';
 
@@ -40,11 +44,14 @@ ImportRepositories buildRepositories() => ImportRepositories(
   certificationRepository: CertificationRepository(),
   tagRepository: TagRepository(),
   diveTypeRepository: DiveTypeRepository(),
+  diveRoleRepository: DiveRoleRepository(),
   siteRepository: SiteRepository(),
   diveRepository: DiveRepository(),
   tankPressureRepository: TankPressureRepository(),
   courseRepository: CourseRepository(),
   diveComputerRepository: DiveComputerRepository(),
+  siteTypeRepository: SiteTypeRepository(),
+  siteClassificationRepository: SiteClassificationRepository(),
 );
 
 Future<String> createTestDiver() async {
@@ -145,7 +152,7 @@ void main() {
       maxDepth: 31.5,
       tanks: const [],
       profile: const [],
-      equipment: const [],
+      gear: looseGear(const []),
       notes: '',
       photoIds: const [],
       sightings: const [],

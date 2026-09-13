@@ -111,15 +111,20 @@ void main() {
     const cases = <String, EquipmentType>{
       'Regulator': EquipmentType.regulator,
       'Reg - Longhose': EquipmentType.regulator,
+      'Long hose': EquipmentType.hose,
+      'LP inflator hose': EquipmentType.hose,
       'reg': EquipmentType.regulator,
       'Octopus': EquipmentType.regulator,
-      'Second Stage': EquipmentType.regulator,
-      'First stage': EquipmentType.regulator,
+      'Second Stage': EquipmentType.secondStage,
+      'First stage': EquipmentType.firstStage,
       'BCD': EquipmentType.bcd,
       'BCD - Wing': EquipmentType.bcd,
       'bc': EquipmentType.bcd,
-      'Wing': EquipmentType.bcd,
-      'Backplate and harness': EquipmentType.bcd,
+      'Wing': EquipmentType.wing,
+      'Harness': EquipmentType.harness,
+      'Backplate and harness': EquipmentType.backplate,
+      'Camera housing': EquipmentType.housing,
+      'Strobe arm': EquipmentType.strobe,
       'Computer': EquipmentType.computer,
       'Dive Watch': EquipmentType.computer,
       'Transmitter': EquipmentType.transmitter,
@@ -141,7 +146,7 @@ void main() {
       'Light': EquipmentType.light,
       'Torch': EquipmentType.light,
       'Camera': EquipmentType.camera,
-      'Strobe': EquipmentType.camera,
+      'Strobe': EquipmentType.strobe,
       'SMB': EquipmentType.smb,
       'DSMB': EquipmentType.smb,
       'Reel': EquipmentType.reel,
@@ -176,6 +181,24 @@ void main() {
       'Save-a-dive kit': EquipmentType.tool,
       'Torque wrench': EquipmentType.tool,
       'O-ring kit': EquipmentType.tool,
+      // #1877 rig accessories, which divers had been filing under BCD.
+      'Cam band': EquipmentType.tankBand,
+      'Cam Bands': EquipmentType.tankBand,
+      'Cam strap': EquipmentType.tankBand,
+      'Tank band': EquipmentType.tankBand,
+      'Tank strap': EquipmentType.tankBand,
+      'Cylinder band': EquipmentType.tankBand,
+      'Weight pocket': EquipmentType.weightPocket,
+      'Weight pockets': EquipmentType.weightPocket,
+      'Weight pouch': EquipmentType.weightPocket,
+      'Trim pocket': EquipmentType.weightPocket,
+      'Trim pouch': EquipmentType.weightPocket,
+      'BCD weight pocket': EquipmentType.weightPocket,
+      'Gear pocket': EquipmentType.gearPocket,
+      'Thigh pocket': EquipmentType.gearPocket,
+      'Utility pocket': EquipmentType.gearPocket,
+      'Drysuit thigh pocket': EquipmentType.gearPocket,
+      'Pocket': EquipmentType.gearPocket,
     };
 
     cases.forEach((input, expected) {
@@ -203,6 +226,44 @@ void main() {
         MacDiveValueMapper.equipmentType('Compass console'),
         EquipmentType.compass,
       );
+    });
+
+    test('a bare pocket or band word does not steal a whole item (#1877)', () {
+      // Only a compound name ("weight pocket", "tank band") outranks the
+      // item words; a bare "pocket" is weak evidence and waits below them.
+      expect(
+        MacDiveValueMapper.equipmentType('BCD w/ pockets'),
+        EquipmentType.bcd,
+      );
+      expect(
+        MacDiveValueMapper.equipmentType('Drysuit with pockets'),
+        EquipmentType.drysuit,
+      );
+      // Soft lead sold to fill a pocket is still lead.
+      expect(
+        MacDiveValueMapper.equipmentType('Soft pocket weights'),
+        EquipmentType.weights,
+      );
+      expect(
+        MacDiveValueMapper.equipmentType('Tank - AL80'),
+        EquipmentType.tank,
+      );
+      // "Pocket" is a size word on real products, so every specific item
+      // word must win over it, not just the ones checked above the weights.
+      const pocketSized = {
+        'Pocket knife': EquipmentType.knife,
+        'Pocket reel': EquipmentType.reel,
+        'Pocket light': EquipmentType.light,
+        'Pocket SMB': EquipmentType.smb,
+        'Pocket tool': EquipmentType.tool,
+      };
+      pocketSized.forEach((input, expected) {
+        expect(
+          MacDiveValueMapper.equipmentType(input),
+          expected,
+          reason: input,
+        );
+      });
     });
 
     test('an accessory word outranks "lycra" (#1518)', () {

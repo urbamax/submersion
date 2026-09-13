@@ -8,6 +8,7 @@ import 'package:submersion/core/constants/sort_options_display.dart';
 import 'package:submersion/core/models/sort_state.dart';
 import 'package:submersion/core/utils/unit_formatter.dart';
 import 'package:submersion/l10n/arb/app_localizations.dart';
+import 'package:submersion/shared/selection/bulk_action.dart';
 import 'package:submersion/shared/widgets/entity_table/entity_table_view.dart';
 import 'package:submersion/shared/widgets/list_view_mode_toggle.dart';
 import 'package:submersion/shared/widgets/master_detail/responsive_breakpoints.dart';
@@ -28,6 +29,7 @@ import 'package:submersion/features/trips/presentation/providers/trip_providers.
 import 'package:submersion/features/trips/presentation/widgets/compact_trip_list_tile.dart';
 import 'package:submersion/features/trips/presentation/widgets/dense_trip_list_tile.dart';
 import 'package:submersion/features/trips/presentation/widgets/upcoming_trip_banner.dart';
+import 'package:submersion/shared/widgets/card_icon_label.dart';
 import 'package:submersion/shared/widgets/feature_accent.dart';
 
 /// Content widget for the trip list, used in master-detail layout.
@@ -297,9 +299,9 @@ class _TripListContentState extends ConsumerState<TripListContent> {
     );
   }
 
-  Future<void> _confirmAndDelete() async {
+  Future<BulkActionOutcome> _confirmAndDelete() async {
     final ids = _selectedIds.toList();
-    if (ids.isEmpty) return;
+    if (ids.isEmpty) return BulkActionOutcome.cancelled;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -321,7 +323,7 @@ class _TripListContentState extends ConsumerState<TripListContent> {
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
+    if (confirmed != true || !mounted) return BulkActionOutcome.cancelled;
 
     final messenger = ScaffoldMessenger.of(context);
     final notifier = ref.read(tripListNotifierProvider.notifier);
@@ -331,12 +333,13 @@ class _TripListContentState extends ConsumerState<TripListContent> {
       await notifier.deleteTrip(id);
     }
 
-    if (!mounted) return;
+    if (!mounted) return BulkActionOutcome.completed;
     messenger.showSnackBar(
       SnackBar(
         content: Text(context.l10n.common_bulkDelete_snackbar(ids.length)),
       ),
     );
+    return BulkActionOutcome.completed;
   }
 
   /// One tap policy for every trip row.
@@ -908,37 +911,26 @@ class TripListTile extends ConsumerWidget {
                   ),
                 ),
               const SizedBox(height: 4),
-              Row(
+              // A Wrap, not a Row: the runtime drops onto its own line when a
+              // narrow tile, or the checkbox column in selection mode, leaves
+              // too little width for both.
+              Wrap(
+                spacing: 12,
+                runSpacing: 4,
                 children: [
-                  Icon(
-                    Icons.scuba_diving,
-                    size: 14,
-                    color: theme.colorScheme.primary,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    context.l10n.trips_list_tile_diveCount(
+                  CardIconLabel(
+                    icon: Icons.scuba_diving,
+                    text: context.l10n.trips_list_tile_diveCount(
                       tripWithStats.diveCount,
                     ),
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.primary,
-                    ),
+                    color: theme.colorScheme.primary,
                   ),
-                  if (tripWithStats.totalRuntime > 0) ...[
-                    const SizedBox(width: 12),
-                    Icon(
-                      Icons.timer,
-                      size: 14,
+                  if (tripWithStats.totalRuntime > 0)
+                    CardIconLabel(
+                      icon: Icons.timer,
+                      text: tripWithStats.formattedRuntime,
                       color: theme.colorScheme.primary,
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      tripWithStats.formattedRuntime,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.primary,
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ],

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:submersion/core/services/database_service.dart';
 import 'package:submersion/features/data_quality/data/repositories/quality_findings_repository.dart';
 import 'package:submersion/features/data_quality/data/services/quality_scan_service.dart';
 import 'package:submersion/features/data_quality/data/services/quality_scan_state_store.dart';
@@ -16,12 +17,14 @@ import 'package:submersion/features/data_quality/presentation/providers/quality_
 import 'package:submersion/features/data_quality/presentation/widgets/quality_finding_card.dart';
 import 'package:submersion/features/dive_log/data/repositories/dive_repository_impl.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive_summary.dart';
-import 'package:submersion/features/dive_log/presentation/providers/dive_repository_provider.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart'
     as domain;
 import 'package:submersion/features/dive_log/presentation/widgets/combine_dives_dialog.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
 import 'package:submersion/l10n/arb/app_localizations.dart';
+import 'package:submersion/features/dive_log/data/services/dive_split_service.dart';
+import 'package:submersion/features/dive_log/presentation/providers/dive_providers.dart';
+import 'package:submersion/features/equipment/data/services/sensor_summary_scheduler.dart';
 
 import '../../../helpers/l10n_test_helpers.dart';
 import '../../../helpers/test_database.dart';
@@ -121,13 +124,14 @@ QualityFinding _f({
   required QualityCategory category,
   Map<String, Object?> params = const {},
   QualitySeverity severity = QualitySeverity.warning,
+  int detectorVersion = 1,
 }) => QualityFinding(
   id: id,
   diveId: diveId,
   relatedDiveId: relatedDiveId,
   computerId: computerId,
   detectorId: detectorId,
-  detectorVersion: 1,
+  detectorVersion: detectorVersion,
   category: category,
   severity: severity,
   status: QualityStatus.open,
@@ -146,6 +150,11 @@ Future<Widget> _wrap(_FakeFindingsRepository repo) async {
       settingsProvider.overrideWith((ref) => _TestSettingsNotifier()),
     ],
     child: const MaterialApp(
+      // Every assertion in this file is an English literal, and an unpinned
+      // MaterialApp resolves against the HOST machine's locale list (not a
+      // fixed en_US), so the app's own translations would win on a
+      // non-English dev machine and the finders would match nothing.
+      locale: Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: DataQualityInboxPage(),
@@ -161,6 +170,8 @@ Future<void> _seedDive(
   DateTime? entryTime,
   double? maxDepth,
   Duration? runtime,
+  String notes = '',
+  int? rating,
 }) {
   final entry = entryTime ?? DateTime.utc(2026, 6, 14, 9, 12);
   return DiveRepository().createDive(
@@ -171,6 +182,8 @@ Future<void> _seedDive(
       entryTime: entry,
       maxDepth: maxDepth,
       runtime: runtime,
+      notes: notes,
+      rating: rating,
     ),
   );
 }
@@ -232,6 +245,9 @@ Widget _scope(
     diveRepository: diveRepository,
   ).cast(),
   child: localizedMaterialApp(
+    // See the note in _wrap: pinned so the English finders below survive a
+    // non-English host locale.
+    locale: const Locale('en'),
     home: DataQualityInboxPage(filterDiveId: filterDiveId),
   ),
 );
@@ -244,6 +260,18 @@ class _FailingDiveRepository implements DiveRepository {
   Future<List<DiveSummary>> getSummariesByIds(List<String> ids) async {
     throw StateError('identity lookup unavailable');
   }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+/// Splits every source off into dive 'split-new'.
+class _FakeSplitService implements DiveSplitService {
+  @override
+  Future<String> split({
+    required String diveId,
+    required String sourceId,
+  }) async => 'split-new';
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -298,6 +326,56 @@ void main() {
     await tester.tap(find.byType(ListTile).first); // expand
     await tester.pumpAndSettle();
     expect(find.text('Go to dive'), findsOneWidget);
+  });
+
+  testWidgets('a split rebuilds the sensor summaries of both dives', (
+    tester,
+  ) async {
+    // The condition engine reads the summaries, and the split rewrites the
+    // original's profile without touching its updated_at.
+    final requests = <String>[];
+    SensorSummaryScheduler.instance.summaryRequestListener = (ids, force) =>
+        requests.add('${(ids.toList()..sort()).join(',')}:$force');
+    addTearDown(
+      () => SensorSummaryScheduler.instance.summaryRequestListener = null,
+    );
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          ..._overrides(
+            prefs,
+            findings: [
+              _f(
+                id: 'f-conflict',
+                detectorId: 'source_conflict',
+                category: QualityCategory.profile,
+                params: const {'sourceId': 's1', 'primarySeconds': 100},
+              ),
+            ],
+          ),
+          diveSplitServiceProvider.overrideWithValue(_FakeSplitService()),
+        ].cast(),
+        child: localizedMaterialApp(
+          locale: const Locale('en'),
+          home: const DataQualityInboxPage(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find
+          .descendant(
+            of: find.byType(QualityFindingCard),
+            matching: find.byType(Icon),
+          )
+          .first,
+    ); // expand
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Split into separate dives'));
+    await tester.pumpAndSettle();
+    expect(requests, ['d1,split-new:true']);
   });
 
   // --- Rendering / formatter coverage --------------------------------------
@@ -1061,32 +1139,252 @@ void main() {
     expect((await DiveRepository().getDiveById('d1'))!.waterTemp, 78);
   });
 
-  testWidgets('consolidate-duplicate repair reports through a SnackBar', (
+  testWidgets(
+    'consolidate-duplicate repair opens the combine dialog with the primary '
+    'selector instead of merging on the spot',
+    (tester) async {
+      // Which recording survives a consolidation decides whose notes, site
+      // and edits are kept. The one-tap path used to pick the smaller UUID;
+      // it now defers to the dialog's primary-computer selector (#1690).
+      final t = DateTime.utc(2026, 7, 1, 10);
+      await DiveRepository().createDive(
+        domain.Dive(
+          id: 'd1',
+          dateTime: t,
+          entryTime: t,
+          runtime: const Duration(minutes: 30),
+          diveComputerModel: 'Perdix',
+          diveComputerSerial: 'serial-1',
+        ),
+      );
+      await DiveRepository().createDive(
+        domain.Dive(
+          id: 'd2',
+          dateTime: t.add(const Duration(minutes: 5)),
+          entryTime: t.add(const Duration(minutes: 5)),
+          runtime: const Duration(minutes: 25),
+          diveComputerModel: 'Teric',
+          diveComputerSerial: 'serial-2',
+        ),
+      );
+      final prefs = await _prefs();
+      await tester.pumpWidget(
+        _scope(
+          prefs,
+          findings: [
+            _f(
+              id: 'r-dup',
+              diveId: 'd1',
+              relatedDiveId: 'd2',
+              detectorId: 'duplicate',
+              category: QualityCategory.duplicate,
+              params: const {'score': 0.9, 'timeDiffMinutes': 5},
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(FilledButton).first);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CombineDivesDialog), findsOneWidget);
+      expect(find.text('Primary dive computer'), findsOneWidget);
+      expect(find.byType(RadioListTile<String>), findsNWidgets(2));
+      // Nothing was merged: both rows are still live.
+      expect(await DiveRepository().getDiveById('d2'), isNotNull);
+      // Dismiss the barrier so the dialog route closes cleanly.
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+    },
+  );
+
+  group('delete-duplicate repair', () {
+    // The commonest duplicate: one dive downloaded twice from a single
+    // computer, where the second copy is a fragment. Consolidation is
+    // refused for that pair, so the card offers to delete the fragment,
+    // and names both dives before anything is written.
+    Future<QualityFinding> seedPair({
+      String doomedNotes = '',
+      int? doomedRating,
+    }) async {
+      await _seedDive(
+        'd1',
+        name: 'Blue Hole',
+        maxDepth: 20,
+        runtime: const Duration(minutes: 35),
+      );
+      await _seedDive(
+        'd2',
+        name: 'Fragment',
+        entryTime: DateTime.utc(2026, 6, 14, 9, 13),
+        maxDepth: 1.7,
+        runtime: const Duration(seconds: 13),
+        notes: doomedNotes,
+        rating: doomedRating,
+      );
+      return _f(
+        id: 'r-dup-same',
+        diveId: 'd1',
+        relatedDiveId: 'd2',
+        detectorId: 'duplicate',
+        category: QualityCategory.duplicate,
+        // Only detector 4 checks whether the doomed copy carries the diver's
+        // own entries, and the repair mapping will not act on an older
+        // finding (#1720), so a fixture offering the repair must say 4.
+        detectorVersion: 4,
+        params: const {
+          'score': 0.9,
+          'timeDiffMinutes': 1,
+          'sameComputer': true,
+          'redundantDiveId': 'd2',
+        },
+      );
+    }
+
+    testWidgets('names both dives, deletes the fragment, and can undo', (
+      tester,
+    ) async {
+      final finding = await seedPair();
+      final prefs = await _prefs();
+      await tester.pumpWidget(_scope(prefs, findings: [finding]));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('No automatic fix. Open the dive to correct this.'),
+        findsNothing,
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete duplicate'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.textContaining('Keep: '), findsOneWidget);
+      expect(find.textContaining('Blue Hole'), findsWidgets);
+      expect(find.textContaining('Delete: '), findsOneWidget);
+      expect(find.textContaining('Fragment'), findsWidgets);
+      // The confirmation has to say what is about to happen, not only who.
+      expect(find.textContaining('same dive computer'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text('Repair applied'), findsOneWidget);
+      expect(await DiveRepository().getDiveById('d2'), isNull);
+      expect(await DiveRepository().getDiveById('d1'), isNotNull);
+
+      await tester.tap(find.text('Undo'));
+      await tester.pumpAndSettle(const Duration(seconds: 6));
+      expect(await DiveRepository().getDiveById('d2'), isNotNull);
+    });
+
+    // The detector will not name a copy carrying the diver's work as the
+    // redundant one (#1720), so this pair should never reach the dialog. It
+    // is written by hand precisely because the dialog is what stands between
+    // the diver and the delete if that rule is ever loosened, or if another
+    // caller reaches the repair by a different route (#1729).
+    testWidgets('the confirmation says what the doomed copy carries', (
+      tester,
+    ) async {
+      final finding = await seedPair(
+        doomedNotes: 'viz was poor',
+        doomedRating: 4,
+      );
+      final prefs = await _prefs();
+      await tester.pumpWidget(_scope(prefs, findings: [finding]));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete duplicate'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('This copy also has: notes \u00b7 a rating'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+    });
+
+    // The read that fills that line runs on the tap, before the dialog. The
+    // repair card drops the Future it returns, so an error there used to go
+    // nowhere: the tap did nothing and said nothing. It must not fall back to
+    // a dialog without the line either, because that is indistinguishable
+    // from "this copy holds nothing", the one reassurance a failed read
+    // cannot give.
+    testWidgets('a failed read reports it rather than confirming blind', (
+      tester,
+    ) async {
+      final finding = await seedPair();
+      final prefs = await _prefs();
+      await tester.pumpWidget(_scope(prefs, findings: [finding]));
+      await tester.pumpAndSettle();
+
+      final db = DatabaseService.instance.database;
+      await tester.runAsync(
+        () => db.customStatement('DROP TABLE dive_custom_fields'),
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete duplicate'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.textContaining('Repair failed'), findsOneWidget);
+      final survivors = await tester.runAsync(
+        () => db.customSelect("SELECT id FROM dives WHERE id = 'd2'").get(),
+      );
+      expect(survivors, hasLength(1));
+    });
+
+    testWidgets('cancelling the confirmation deletes nothing', (tester) async {
+      final finding = await seedPair();
+      final prefs = await _prefs();
+      await tester.pumpWidget(_scope(prefs, findings: [finding]));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete duplicate'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(SnackBar), findsNothing);
+      expect(await DiveRepository().getDiveById('d2'), isNotNull);
+    });
+  });
+
+  testWidgets('a same-computer duplicate offers no Consolidate button', (
     tester,
   ) async {
+    // The real-world duplicate is the same dive downloaded twice from one
+    // computer, and DiveConsolidationBuilder refuses to merge those. The
+    // inbox used to offer Consolidate anyway, so the tap could only ever
+    // fail; the card now explains that no automatic fix exists instead.
     final prefs = await _prefs();
     await tester.pumpWidget(
       _scope(
         prefs,
         findings: [
           _f(
-            id: 'r-dup',
+            id: 'r-dup-same',
             diveId: 'd1',
             relatedDiveId: 'd2',
             detectorId: 'duplicate',
             category: QualityCategory.duplicate,
-            params: const {'score': 0.9, 'timeDiffMinutes': 5},
+            params: const {
+              'score': 0.9,
+              'timeDiffMinutes': 1,
+              'sameComputer': true,
+            },
           ),
         ],
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byType(FilledButton).first);
-    await tester.pumpAndSettle();
-
-    expect(find.byType(SnackBar), findsWidgets);
-    await tester.pumpAndSettle(const Duration(seconds: 6));
+    expect(find.text('Consolidate'), findsNothing);
+    expect(
+      find.text('No automatic fix. Open the dive to correct this.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('split-source repair reports a failure through a SnackBar', (

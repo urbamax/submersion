@@ -35,6 +35,8 @@ String conflictReferenceLabel(
       return l10n.settings_conflict_ref_tag;
     case 'diveTypes':
       return l10n.settings_conflict_ref_diveType;
+    case 'siteTypes':
+      return l10n.settings_conflict_ref_siteType;
     case 'divers':
       return l10n.settings_conflict_ref_diver;
     case 'buddies':
@@ -49,6 +51,8 @@ String conflictReferenceLabel(
       return l10n.settings_conflict_ref_diveComputer;
     case 'diveDataSources':
       return l10n.settings_conflict_ref_dataSource;
+    case 'importedFiles':
+      return l10n.settings_conflict_ref_importedFile;
     case 'diveTanks':
       return l10n.settings_conflict_ref_tank;
     case 'divePlanTanks':

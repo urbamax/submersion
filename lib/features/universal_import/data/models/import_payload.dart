@@ -24,6 +24,17 @@ class ImportPayload extends Equatable {
   /// Metadata about the import source.
   final Map<String, dynamic> metadata;
 
+  /// [metadata] key for custom dive role definitions (a list of maps with
+  /// `id`, `name`, `sortOrder`, `isBuiltIn`). They have no review step, so
+  /// they ride here rather than as an entity type, and are restored ahead
+  /// of the dive links that reference them.
+  static const customDiveRolesKey = 'customDiveRoles';
+
+  /// Metadata key for custom site type definitions (issue #1765): maps with
+  /// `id`, `name` and `sortOrder`. Like dive roles they have no review step;
+  /// site maps reference them by id in `siteTypeRefs`.
+  static const customSiteTypesKey = 'customSiteTypes';
+
   const ImportPayload({
     required this.entities,
     this.warnings = const [],
@@ -50,6 +61,11 @@ class ImportPayload extends Equatable {
 
   /// Whether the payload has any data to import.
   bool get isNotEmpty => !isEmpty;
+
+  /// The message to show when this payload imports nothing, from
+  /// [ImportFailureDetail.failureDetail]; null when nothing showable was
+  /// recorded.
+  String? get failureReason => warnings.failureDetail?.message;
 
   @override
   List<Object?> get props => [entities, warnings, metadata];

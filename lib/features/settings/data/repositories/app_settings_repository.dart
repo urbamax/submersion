@@ -7,6 +7,7 @@ import 'package:submersion/core/database/database.dart';
 import 'package:submersion/core/services/database_service.dart';
 import 'package:submersion/core/services/logger_service.dart';
 import 'package:submersion/core/services/sync/sync_event_bus.dart';
+import 'package:submersion/features/equipment/domain/models/equipment_arrangement.dart';
 import 'package:submersion/features/gas_calculators/domain/blending/blender_preferences.dart';
 
 /// Read/write global (not per-diver) app settings stored in the
@@ -20,6 +21,7 @@ class AppSettingsRepository {
   static const _navPrimaryIdsKey = 'nav_primary_ids';
   static const _navRailIdsKey = 'nav_rail_ids';
   static const _blenderPrefsKey = 'gas_blender_prefs';
+  static const _equipmentArrangementKey = 'equipment_arrangement';
 
   /// Emits whenever the `settings` table changes so providers holding a
   /// setting refresh after a sync applies a remote change.
@@ -153,6 +155,83 @@ class AppSettingsRepository {
     } catch (e, stackTrace) {
       _log.error(
         'Failed to write $_blenderPrefsKey',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  /// How gear lists on a dive are grouped and ordered (#1486, #1576).
+  ///
+  /// Returns null when no usable value is stored: the key has never been
+  /// written, or the stored value is not a JSON object. Both mean the same
+  /// thing to the caller, use `EquipmentArrangement.defaults`, which is what
+  /// a fresh launch would show.
+  ///
+  /// A read that FAILS (the database is unavailable, as in the null-database
+  /// window of a restore, or the query errors) is different and rethrows,
+  /// unlike the other reads in this class. Reporting it as null would tell
+  /// the arrangement notifier "nothing is stored", so one transient error
+  /// would reset a diver's customized arrangement to the defaults, and the
+  /// next edit would save the defaults over the real value. The notifier
+  /// treats a throw as "could not read" and keeps what it has; the PDF
+  /// export falls back to the defaults itself.
+  Future<EquipmentArrangement?> getEquipmentArrangement() async {
+    final String? raw;
+    try {
+      final row =
+          await (_db.select(_db.settings)
+                ..where((t) => t.key.equals(_equipmentArrangementKey)))
+              .getSingleOrNull();
+      raw = row?.value;
+    } catch (e, stackTrace) {
+      _log.error(
+        'Failed to read $_equipmentArrangementKey',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+    if (raw == null) return null;
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } on FormatException catch (e, stackTrace) {
+      _log.error(
+        'Stored $_equipmentArrangementKey is not valid JSON',
+        error: e,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
+    if (decoded is! Map<String, dynamic>) return null;
+    return EquipmentArrangement.fromJson(decoded);
+  }
+
+  /// Persist the gear arrangement. Rethrows so a failed save is visible,
+  /// matching [setNavPrimaryIds].
+  Future<void> setEquipmentArrangement(EquipmentArrangement arrangement) async {
+    try {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      await _db
+          .into(_db.settings)
+          .insertOnConflictUpdate(
+            SettingsCompanion(
+              key: const Value(_equipmentArrangementKey),
+              value: Value(jsonEncode(arrangement.toJson())),
+              updatedAt: Value(now),
+            ),
+          );
+      await _syncRepository.markRecordPending(
+        entityType: 'settings',
+        recordId: _equipmentArrangementKey,
+        localUpdatedAt: now,
+      );
+      SyncEventBus.notifyLocalChange();
+    } catch (e, stackTrace) {
+      _log.error(
+        'Failed to write $_equipmentArrangementKey',
         error: e,
         stackTrace: stackTrace,
       );

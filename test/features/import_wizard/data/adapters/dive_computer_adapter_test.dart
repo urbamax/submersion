@@ -11,10 +11,12 @@ import 'package:submersion/features/dive_log/data/repositories/dive_repository_i
 import 'package:submersion/features/dive_log/data/services/dive_consolidation_service.dart';
 import 'package:submersion/features/dive_log/data/services/dive_merge_snapshot.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive_computer.dart';
+import 'package:submersion/features/dive_log/domain/services/unreadable_series_exception.dart';
 import 'package:submersion/features/import_wizard/data/adapters/dive_computer_adapter.dart';
 import 'package:submersion/features/import_wizard/domain/models/duplicate_action.dart';
 import 'package:submersion/features/import_wizard/domain/models/import_bundle.dart';
 import 'package:submersion/features/import_wizard/domain/models/import_cancellation_token.dart';
+import 'package:submersion/features/import_wizard/domain/models/import_notice.dart';
 import 'package:submersion/features/import_wizard/domain/models/import_phase.dart';
 
 @GenerateNiceMocks([
@@ -58,6 +60,7 @@ DownloadedDive makeDownloadedDive({
   double? minTemperature = 22.1,
   String? fingerprint,
   List<ProfileSample> profile = const [],
+  List<DownloadedTank> tanks = const [],
 }) {
   return DownloadedDive(
     startTime: startTime ?? DateTime(2026, 3, 15, 10, 32),
@@ -67,6 +70,7 @@ DownloadedDive makeDownloadedDive({
     minTemperature: minTemperature,
     fingerprint: fingerprint,
     profile: profile,
+    tanks: tanks,
   );
 }
 
@@ -82,6 +86,11 @@ void main() {
 
   setUp(() {
     mockImportService = MockDiveImportService();
+    // The registry notice reads this after every import; no unmatched
+    // serials unless a test says otherwise.
+    when(
+      mockImportService.unmatchedTransmitterSerials,
+    ).thenReturn(const <String>[]);
     mockComputerRepo = MockDiveComputerRepository();
     mockDiveRepo = MockDiveRepository();
     mockConsolidationService = MockDiveConsolidationService();
@@ -531,6 +540,145 @@ void main() {
       expect(result.importedCounts[ImportEntityType.dives], equals(1));
     });
 
+    group('retaining source dive numbers (issue #1832)', () {
+      test('asks the import service to keep the computer number', () async {
+        final dive = makeDownloadedDive();
+        adapter.setDownloadedDives([dive]);
+        final bundle = await adapter.buildBundle();
+        when(
+          mockImportService.importSingleDiveAsNew(
+            dive,
+            computerId: computer.id,
+            diverId: diverId,
+            retainSourceDiveNumber: true,
+          ),
+        ).thenAnswer((_) async => 'new-dive-1');
+
+        await adapter.performImport(
+          bundle,
+          {
+            ImportEntityType.dives: {0},
+          },
+          {},
+          retainSourceDiveNumbers: true,
+        );
+
+        verify(
+          mockImportService.importSingleDiveAsNew(
+            dive,
+            computerId: computer.id,
+            diverId: diverId,
+            retainSourceDiveNumber: true,
+          ),
+        ).called(1);
+      });
+
+      test('reports imported dives whose number is already in use', () async {
+        final dive = makeDownloadedDive();
+        adapter.setDownloadedDives([dive]);
+        final bundle = await adapter.buildBundle();
+        when(
+          mockImportService.importSingleDiveAsNew(
+            dive,
+            computerId: computer.id,
+            diverId: diverId,
+            retainSourceDiveNumber: true,
+          ),
+        ).thenAnswer((_) async => 'new-dive-1');
+        when(
+          mockDiveRepo.countDivesSharingDiveNumber(['new-dive-1']),
+        ).thenAnswer((_) async => 1);
+
+        final result = await adapter.performImport(
+          bundle,
+          {
+            ImportEntityType.dives: {0},
+          },
+          {},
+          retainSourceDiveNumbers: true,
+        );
+
+        final notice = result.notices.single;
+        expect(notice.kind, ImportNoticeKind.diveNumberConflict);
+        expect(notice.count, 1);
+      });
+
+      test('a dive kept standalone keeps its computer number', () async {
+        final dive = makeDownloadedDive();
+        adapter.setDownloadedDives([dive]);
+        final raw = await adapter.buildBundle();
+        final bundle = ImportBundle(
+          source: raw.source,
+          groups: {
+            ImportEntityType.dives: EntityGroup(
+              items: raw.groups[ImportEntityType.dives]!.items,
+              duplicateIndices: const {0},
+              matchResults: {
+                0: const DiveMatchResult(
+                  diveId: 'existing-dive',
+                  score: 0.9,
+                  timeDifferenceMs: 0,
+                ),
+              },
+            ),
+          },
+        );
+        when(
+          mockDiveRepo.getComputerIdForDive('existing-dive'),
+        ).thenAnswer((_) async => 'other-computer');
+        when(
+          mockImportService.importSingleDiveAsNew(
+            dive,
+            computerId: computer.id,
+            diverId: diverId,
+            retainSourceDiveNumber: true,
+          ),
+        ).thenAnswer((_) async => 'new-dive-1');
+        when(
+          mockConsolidationService.apply(
+            targetDiveId: anyNamed('targetDiveId'),
+            secondaryDiveIds: anyNamed('secondaryDiveIds'),
+          ),
+        ).thenThrow(const UnreadableSeriesException(['series-1']));
+
+        final result = await adapter.performImport(
+          bundle,
+          {
+            ImportEntityType.dives: {0},
+          },
+          {
+            ImportEntityType.dives: {0: DuplicateAction.consolidate},
+          },
+          retainSourceDiveNumbers: true,
+        );
+
+        expect(result.importedDiveIds, ['new-dive-1']);
+        verify(
+          mockDiveRepo.countDivesSharingDiveNumber(['new-dive-1']),
+        ).called(1);
+      });
+
+      test('does not look for number conflicts when auto-numbering', () async {
+        final dive = makeDownloadedDive();
+        adapter.setDownloadedDives([dive]);
+        final bundle = await adapter.buildBundle();
+        when(
+          mockImportService.importSingleDiveAsNew(
+            dive,
+            computerId: computer.id,
+            diverId: diverId,
+          ),
+        ).thenAnswer((_) async => 'new-dive-1');
+
+        final result = await adapter.performImport(bundle, {
+          ImportEntityType.dives: {0},
+        }, {});
+
+        verifyNever(mockDiveRepo.countDivesSharingDiveNumber(any));
+        expect(result.notices, isEmpty);
+      });
+    });
+
     test('handles DuplicateAction.skip', () async {
       final dive = makeDownloadedDive();
       adapter.setDownloadedDives([dive]);
@@ -556,6 +704,56 @@ void main() {
       expect(result.skippedCount, equals(1));
       expect(result.importedCounts[ImportEntityType.dives], equals(0));
     });
+
+    test(
+      'unknown-transmitter notice counts only dives that were written',
+      () async {
+        // Both dives carry the unmatched serial, but dive 0 is skipped as a
+        // duplicate and never reaches the database, so it must not inflate
+        // "Affects N dives" (issue #1365).
+        const tank = DownloadedTank(
+          index: 0,
+          o2Percent: 21,
+          transmitterSerial: '999',
+        );
+        final skippedDive = makeDownloadedDive(
+          fingerprint: 'fp-skip',
+          tanks: const [tank],
+        );
+        final newDive = makeDownloadedDive(
+          fingerprint: 'fp-new',
+          startTime: DateTime(2026, 3, 16, 10, 32),
+          tanks: const [tank],
+        );
+        adapter.setDownloadedDives([skippedDive, newDive]);
+        final bundle = await adapter.buildBundle();
+        when(mockImportService.unmatchedTransmitterSerials).thenReturn(['999']);
+        when(
+          mockImportService.importSingleDiveAsNew(
+            newDive,
+            computerId: computer.id,
+            diverId: diverId,
+          ),
+        ).thenAnswer((_) async => 'new-dive-1');
+
+        final result = await adapter.performImport(
+          bundle,
+          {
+            ImportEntityType.dives: {1},
+          },
+          {
+            ImportEntityType.dives: {0: DuplicateAction.skip},
+          },
+        );
+
+        expect(result.skippedCount, 1);
+        expect(result.importedCounts[ImportEntityType.dives], 1);
+        expect(result.notices, hasLength(1));
+        expect(result.notices.single.count, 1);
+        // The accumulator was started fresh for this run.
+        verify(mockImportService.resetUnmatchedTransmitterSerials()).called(1);
+      },
+    );
 
     test('handles DuplicateAction.importAsNew', () async {
       final dive = makeDownloadedDive();

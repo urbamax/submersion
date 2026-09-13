@@ -118,6 +118,87 @@ class UddfImportParsers {
     return value;
   }
 
+  /// Reads a dive's own entry or exit fix, the `<{side}latitude>` and
+  /// `<{side}longitude>` pair `UddfExportBuilders.buildDiveGpsElements`
+  /// writes into [parent].
+  ///
+  /// Returns null unless both halves are present, finite and on the globe. A
+  /// lone latitude is not a position, and treating it as one would also stop
+  /// the importer falling back to the dive's `<source>` coordinates.
+  static ({double latitude, double longitude})? parseDiveGps(
+    XmlElement parent,
+    String side,
+  ) {
+    final latitude = parseUddfDouble(getElementText(parent, '${side}latitude'));
+    final longitude = parseUddfDouble(
+      getElementText(parent, '${side}longitude'),
+    );
+    if (latitude == null || longitude == null) return null;
+    if (latitude.abs() > 90 || longitude.abs() > 180) return null;
+    return (latitude: latitude, longitude: longitude);
+  }
+
+  /// Removes `diveData['profile']` when it is the outline Submersion's own
+  /// UDDF writers invented for a dive with no recorded samples (issue
+  /// #1874), so backups written before that fix stop restoring it.
+  ///
+  /// Those writers put a (0 s, 0 m) waypoint first on every dive and, when
+  /// the dive had a duration and a greatest depth but no samples, followed it
+  /// with the greatest depth at 20% of the duration, the average depth (or
+  /// 0.7 x the greatest) at 80%, and the surface at 100%. Only that exact
+  /// shape, or the lone first waypoint, is dropped, and only in a document
+  /// whose `<generator>` names Submersion; any other file or shape keeps its
+  /// profile. Call it once the dive's `maxDepth` and `avgDepth` are parsed,
+  /// since the invented depths were derived from them.
+  static void dropInventedSubmersionProfile(
+    XmlElement diveElement,
+    Map<String, dynamic> diveData,
+  ) {
+    final profile = diveData['profile'];
+    if (profile is! List<Map<String, dynamic>>) return;
+    if (!_writtenBySubmersion(diveElement)) return;
+    if (_isInventedOutline(
+      profile,
+      maxDepth: diveData['maxDepth'] as double?,
+      avgDepth: diveData['avgDepth'] as double?,
+    )) {
+      diveData.remove('profile');
+    }
+  }
+
+  static bool _writtenBySubmersion(XmlElement diveElement) =>
+      diveElement.document?.rootElement
+          .getElement('generator')
+          ?.getElement('name')
+          ?.innerText
+          .trim() ==
+      'Submersion';
+
+  static bool _isInventedOutline(
+    List<Map<String, dynamic>> profile, {
+    required double? maxDepth,
+    required double? avgDepth,
+  }) {
+    (int, double)? at(int i) => switch (profile[i]) {
+      {'timestamp': final int t, 'depth': final double d} => (t, d),
+      _ => null,
+    };
+    bool near(double a, double b) => (a - b).abs() < 1e-9;
+
+    if (profile.isEmpty || at(0) != (0, 0.0)) return false;
+    if (profile.length == 1) return true;
+    if (profile.length != 4 || maxDepth == null) return false;
+    final (descent, bottom, end) = (at(1), at(2), at(3));
+    if (descent == null || bottom == null || end == null) return false;
+    final duration = end.$1;
+    return duration > 0 &&
+        end.$2 == 0 &&
+        descent.$1 == (duration * 0.2).toInt() &&
+        near(descent.$2, maxDepth) &&
+        bottom.$1 == (duration * 0.8).toInt() &&
+        near(bottom.$2, avgDepth ?? maxDepth * 0.7);
+  }
+
   static void assignGasMixToTankIfMissing({
     required List<Map<String, dynamic>> tanks,
     required int tankIndex,
@@ -553,8 +634,34 @@ class UddfImportParsers {
 
     tag['name'] = getElementText(tagElement, 'name') ?? '';
     tag['colorHex'] = getElementText(tagElement, 'color');
+    // Where the tag is offered (issue #1765); null when a file predates it.
+    tag['appliesToDives'] = _parseBool(
+      getElementText(tagElement, 'appliestodives'),
+    );
+    tag['appliesToSites'] = _parseBool(
+      getElementText(tagElement, 'appliestosites'),
+    );
 
     return tag;
+  }
+
+  static bool? _parseBool(String? text) => switch (text?.trim().toLowerCase()) {
+    'true' || '1' => true,
+    'false' || '0' => false,
+    _ => null,
+  };
+
+  /// A custom site type definition from `<sitetypes>` (issue #1765):
+  /// `{id, name, sortOrder}`, or empty when the element lacks an id or name.
+  static Map<String, dynamic> parseSiteTypeElement(XmlElement element) {
+    final id = element.getAttribute('id');
+    final name = getElementText(element, 'name');
+    if (id == null || id.isEmpty || name == null || name.isEmpty) return {};
+    return {
+      'id': id,
+      'name': name,
+      'sortOrder': int.tryParse(getElementText(element, 'sortorder') ?? ''),
+    };
   }
 
   static Map<String, dynamic> parseDiveTypeElement(XmlElement typeElement) {
@@ -698,6 +805,33 @@ class UddfImportParsers {
     return equipmentSet;
   }
 
+  /// One `<component>` of the private `<components>` block (issue #1487):
+  /// an assembly template row, both ends as prefixed equipment refs.
+  static Map<String, dynamic> parseComponent(XmlElement element) => {
+    'parentRef': element.getAttribute('parent') ?? '',
+    'componentRef': element.getAttribute('component') ?? '',
+    'role': getElementText(element, 'role') ?? '',
+    'sortOrder': int.tryParse(element.getAttribute('order') ?? '') ?? 0,
+  };
+
+  /// The private `<gearlinks>` block: per dive ref, the gear rows that
+  /// carry provenance (the assembly they came through, the set applied).
+  static Map<String, List<Map<String, String?>>> parseGearLinks(
+    XmlElement gearlinks,
+  ) => {
+    for (final dive in gearlinks.findElements('dive'))
+      if (dive.getAttribute('ref') case final ref? when ref.isNotEmpty)
+        ref: [
+          for (final link in dive.findElements('link'))
+            if (link.getAttribute('item') case final item? when item.isNotEmpty)
+              {
+                'itemRef': item,
+                'viaRef': link.getAttribute('via'),
+                'setRef': link.getAttribute('set'),
+              },
+        ],
+  };
+
   static Map<String, dynamic> parseFullBuddy(XmlElement buddyElement) {
     final buddy = <String, dynamic>{};
     final buddyId = buddyElement.getAttribute('id');
@@ -772,6 +906,25 @@ class UddfImportParsers {
       site['notes'] = additionalNotes;
     }
 
+    // Site types and tags (issue #1765). Carried on the site map because
+    // the import wizard keeps only entity lists.
+    final typeRefs = [
+      for (final ref
+          in siteElement
+              .findElements('sitetypes')
+              .expand((s) => s.findElements('sitetyperef')))
+        if (ref.innerText.trim().isNotEmpty) ref.innerText.trim(),
+    ];
+    if (typeRefs.isNotEmpty) site['siteTypeRefs'] = typeRefs;
+    final tagRefs = [
+      for (final ref
+          in siteElement
+              .findElements('tags')
+              .expand((s) => s.findElements('tagref')))
+        if (ref.innerText.trim().isNotEmpty) ref.innerText.trim(),
+    ];
+    if (tagRefs.isNotEmpty) site['tagRefs'] = tagRefs;
+
     return site;
   }
 
@@ -826,6 +979,33 @@ class UddfImportParsers {
     item['isActive'] = isActive?.toLowerCase() != 'false';
 
     item['notes'] = getElementText(itemElement, 'notes') ?? '';
+
+    // Condition phase 3a: the parent link and the check-ins. Kept raw
+    // (uddf ids and tag names) for the entity importer to resolve.
+    item['parentRef'] = getElementText(itemElement, 'parentref');
+    final observationsElement = itemElement
+        .findElements('observations')
+        .firstOrNull;
+    if (observationsElement != null) {
+      item['observations'] = [
+        for (final o in observationsElement.findElements('observation'))
+          {
+            // Wall clock, like a dive date: a zoneless value must not be
+            // read as the importing device's local time.
+            'observedAt': parseDiveDateTime(getElementText(o, 'date')),
+            'diveRef': getElementText(o, 'diveref'),
+            'status': getElementText(o, 'status'),
+            'tags': [
+              for (final t
+                  in o
+                      .findElements('tags')
+                      .expand((e) => e.findElements('tag')))
+                t.innerText.trim(),
+            ],
+            'note': getElementText(o, 'note') ?? '',
+          },
+      ];
+    }
 
     return item;
   }

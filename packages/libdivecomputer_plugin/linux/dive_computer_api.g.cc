@@ -834,11 +834,14 @@ struct _LibdivecomputerPluginGasMix {
   int64_t index;
   double o2_percent;
   double he_percent;
+  int64_t* usage;
 };
 
 G_DEFINE_TYPE(LibdivecomputerPluginGasMix, libdivecomputer_plugin_gas_mix, G_TYPE_OBJECT)
 
 static void libdivecomputer_plugin_gas_mix_dispose(GObject* object) {
+  LibdivecomputerPluginGasMix* self = LIBDIVECOMPUTER_PLUGIN_GAS_MIX(object);
+  g_clear_pointer(&self->usage, g_free);
   G_OBJECT_CLASS(libdivecomputer_plugin_gas_mix_parent_class)->dispose(object);
 }
 
@@ -849,11 +852,18 @@ static void libdivecomputer_plugin_gas_mix_class_init(LibdivecomputerPluginGasMi
   G_OBJECT_CLASS(klass)->dispose = libdivecomputer_plugin_gas_mix_dispose;
 }
 
-LibdivecomputerPluginGasMix* libdivecomputer_plugin_gas_mix_new(int64_t index, double o2_percent, double he_percent) {
+LibdivecomputerPluginGasMix* libdivecomputer_plugin_gas_mix_new(int64_t index, double o2_percent, double he_percent, int64_t* usage) {
   LibdivecomputerPluginGasMix* self = LIBDIVECOMPUTER_PLUGIN_GAS_MIX(g_object_new(libdivecomputer_plugin_gas_mix_get_type(), nullptr));
   self->index = index;
   self->o2_percent = o2_percent;
   self->he_percent = he_percent;
+  if (usage != nullptr) {
+    self->usage = static_cast<int64_t*>(malloc(sizeof(int64_t)));
+    *self->usage = *usage;
+  }
+  else {
+    self->usage = nullptr;
+  }
   return self;
 }
 
@@ -872,11 +882,17 @@ double libdivecomputer_plugin_gas_mix_get_he_percent(LibdivecomputerPluginGasMix
   return self->he_percent;
 }
 
+int64_t* libdivecomputer_plugin_gas_mix_get_usage(LibdivecomputerPluginGasMix* self) {
+  g_return_val_if_fail(LIBDIVECOMPUTER_PLUGIN_IS_GAS_MIX(self), nullptr);
+  return self->usage;
+}
+
 static FlValue* libdivecomputer_plugin_gas_mix_to_list(LibdivecomputerPluginGasMix* self) {
   FlValue* values = fl_value_new_list();
   fl_value_append_take(values, fl_value_new_int(self->index));
   fl_value_append_take(values, fl_value_new_float(self->o2_percent));
   fl_value_append_take(values, fl_value_new_float(self->he_percent));
+  fl_value_append_take(values, self->usage != nullptr ? fl_value_new_int(*self->usage) : fl_value_new_null());
   return values;
 }
 
@@ -887,7 +903,14 @@ static LibdivecomputerPluginGasMix* libdivecomputer_plugin_gas_mix_new_from_list
   double o2_percent = fl_value_get_float(value1);
   FlValue* value2 = fl_value_get_list_value(values, 2);
   double he_percent = fl_value_get_float(value2);
-  return libdivecomputer_plugin_gas_mix_new(index, o2_percent, he_percent);
+  FlValue* value3 = fl_value_get_list_value(values, 3);
+  int64_t* usage = nullptr;
+  int64_t usage_value;
+  if (fl_value_get_type(value3) != FL_VALUE_TYPE_NULL) {
+    usage_value = fl_value_get_int(value3);
+    usage = &usage_value;
+  }
+  return libdivecomputer_plugin_gas_mix_new(index, o2_percent, he_percent, usage);
 }
 
 struct _LibdivecomputerPluginTankInfo {
@@ -2457,8 +2480,10 @@ static void libdivecomputer_plugin_dive_computer_host_api_start_download_cb(FlBa
   LibdivecomputerPluginDiscoveredDevice* device = LIBDIVECOMPUTER_PLUGIN_DISCOVERED_DEVICE(fl_value_get_custom_value_object(value0));
   FlValue* value1 = fl_value_get_list_value(message_, 1);
   const gchar* fingerprint = fl_value_get_string(value1);
+  FlValue* value2 = fl_value_get_list_value(message_, 2);
+  gboolean sync_clock = fl_value_get_bool(value2);
   g_autoptr(LibdivecomputerPluginDiveComputerHostApiResponseHandle) handle = libdivecomputer_plugin_dive_computer_host_api_response_handle_new(channel, response_handle);
-  self->vtable->start_download(device, fingerprint, handle, self->user_data);
+  self->vtable->start_download(device, fingerprint, sync_clock, handle, self->user_data);
 }
 
 static void libdivecomputer_plugin_dive_computer_host_api_cancel_download_cb(FlBasicMessageChannel* channel, FlValue* message_, FlBasicMessageChannelResponseHandle* response_handle, gpointer user_data) {
@@ -3067,11 +3092,12 @@ static void libdivecomputer_plugin_dive_computer_flutter_api_on_download_complet
   g_task_return_pointer(task, result, g_object_unref);
 }
 
-void libdivecomputer_plugin_dive_computer_flutter_api_on_download_complete(LibdivecomputerPluginDiveComputerFlutterApi* self, int64_t total_dives, const gchar* serial_number, const gchar* firmware_version, GCancellable* cancellable, GAsyncReadyCallback callback, gpointer user_data) {
+void libdivecomputer_plugin_dive_computer_flutter_api_on_download_complete(LibdivecomputerPluginDiveComputerFlutterApi* self, int64_t total_dives, const gchar* serial_number, const gchar* firmware_version, const gchar* clock_sync_status, GCancellable* cancellable, GAsyncReadyCallback callback, gpointer user_data) {
   g_autoptr(FlValue) args = fl_value_new_list();
   fl_value_append_take(args, fl_value_new_int(total_dives));
   fl_value_append_take(args, serial_number != nullptr ? fl_value_new_string(serial_number) : fl_value_new_null());
   fl_value_append_take(args, firmware_version != nullptr ? fl_value_new_string(firmware_version) : fl_value_new_null());
+  fl_value_append_take(args, clock_sync_status != nullptr ? fl_value_new_string(clock_sync_status) : fl_value_new_null());
   g_autofree gchar* channel_name = g_strdup_printf("dev.flutter.pigeon.libdivecomputer_plugin.DiveComputerFlutterApi.onDownloadComplete%s", self->suffix);
   g_autoptr(LibdivecomputerPluginMessageCodec) codec = libdivecomputer_plugin_message_codec_new();
   FlBasicMessageChannel* channel = fl_basic_message_channel_new(self->messenger, channel_name, FL_MESSAGE_CODEC(codec));

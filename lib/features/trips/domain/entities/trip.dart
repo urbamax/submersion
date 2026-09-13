@@ -17,6 +17,12 @@ class Trip extends Equatable {
 
   /// Return flight departure, wall-clock-as-UTC (the dive-time frame).
   final DateTime? returnFlightAt;
+
+  /// Scrubber margin overrides (condition phase 4b): the diver's own dive
+  /// count and runtime per dive for this trip. Null means estimate from
+  /// recent history.
+  final int? expectedDives;
+  final int? expectedRuntimeMinutes;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -33,6 +39,8 @@ class Trip extends Equatable {
     this.notes = '',
     this.isShared = false,
     this.returnFlightAt,
+    this.expectedDives,
+    this.expectedRuntimeMinutes,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -64,6 +72,30 @@ class Trip extends Equatable {
     final start = DateTime(startDate.year, startDate.month, startDate.day);
     final end = DateTime(endDate.year, endDate.month, endDate.day);
     return !dateOnly.isBefore(start) && !dateOnly.isAfter(end);
+  }
+
+  /// Whether the trip's first day is still ahead of [date] (date-only, same
+  /// normalization as [containsDate]).
+  ///
+  /// Takes its reference date rather than reading the clock, so a caller
+  /// classifying several trips in one pass can measure every one of them
+  /// against a single captured instant. [isInProgress] and [isUpcoming] each
+  /// call `DateTime.now()` themselves, so combining them with a locally
+  /// captured "now" mixes clock reads that can straddle midnight.
+  bool startsAfter(DateTime date) {
+    final dateOnly = DateTime(date.year, date.month, date.day);
+    final start = DateTime(startDate.year, startDate.month, startDate.day);
+    return start.isAfter(dateOnly);
+  }
+
+  /// Whether the trip's last day is behind [date] (date-only, same
+  /// normalization as [startsAfter]): the trip is over. Takes its
+  /// reference date for the same reason, so "past" is one clock read
+  /// rather than [isUpcoming] and [isInProgress] reading it twice.
+  bool endsBefore(DateTime date) {
+    final dateOnly = DateTime(date.year, date.month, date.day);
+    final end = DateTime(endDate.year, endDate.month, endDate.day);
+    return end.isBefore(dateOnly);
   }
 
   /// Whether this trip is upcoming or currently underway (date-only
@@ -107,6 +139,8 @@ class Trip extends Equatable {
     String? notes,
     bool? isShared,
     Object? returnFlightAt = _undefined,
+    Object? expectedDives = _undefined,
+    Object? expectedRuntimeMinutes = _undefined,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -129,6 +163,12 @@ class Trip extends Equatable {
       returnFlightAt: returnFlightAt == _undefined
           ? this.returnFlightAt
           : returnFlightAt as DateTime?,
+      expectedDives: expectedDives == _undefined
+          ? this.expectedDives
+          : expectedDives as int?,
+      expectedRuntimeMinutes: expectedRuntimeMinutes == _undefined
+          ? this.expectedRuntimeMinutes
+          : expectedRuntimeMinutes as int?,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -148,6 +188,8 @@ class Trip extends Equatable {
     notes,
     isShared,
     returnFlightAt,
+    expectedDives,
+    expectedRuntimeMinutes,
     createdAt,
     updatedAt,
   ];

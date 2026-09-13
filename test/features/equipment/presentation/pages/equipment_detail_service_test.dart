@@ -8,7 +8,14 @@ import 'package:submersion/features/equipment/domain/entities/service_kind.dart'
 import 'package:submersion/features/equipment/domain/entities/service_record.dart';
 import 'package:submersion/features/equipment/domain/entities/service_schedule.dart';
 import 'package:submersion/features/equipment/presentation/pages/equipment_detail_page.dart';
+import 'package:submersion/features/equipment/presentation/providers/equipment_component_providers.dart';
+import 'package:submersion/features/equipment/presentation/providers/equipment_observation_providers.dart';
 import 'package:submersion/features/equipment/presentation/providers/equipment_providers.dart';
+import 'package:submersion/features/equipment/domain/entities/condition_trend.dart';
+import 'package:submersion/features/equipment/domain/entities/equipment_exposure_totals.dart';
+import 'package:submersion/features/equipment/presentation/providers/condition_trend_providers.dart';
+import 'package:submersion/features/equipment/presentation/providers/equipment_condition_providers.dart';
+import 'package:submersion/features/equipment/presentation/providers/equipment_exposure_providers.dart';
 import 'package:submersion/l10n/arb/app_localizations.dart';
 
 import '../../../../helpers/mock_providers.dart';
@@ -58,6 +65,31 @@ void main() {
           equipmentItemProvider(item.id).overrideWith((ref) async => item),
           equipmentDiveCountProvider(item.id).overrideWith((ref) async => 0),
           equipmentTripCountProvider(item.id).overrideWith((ref) async => 0),
+          equipmentComponentsProvider(
+            item.id,
+          ).overrideWith((ref) async => const []),
+          equipmentPartOfProvider(
+            item.id,
+          ).overrideWith((ref) async => const []),
+          equipmentExposureTotalsProvider(
+            item.id,
+          ).overrideWith((ref) async => EquipmentExposureTotals.empty),
+          equipmentConditionProvider(
+            item.id,
+          ).overrideWith((ref) async => const []),
+          conditionTrendProvider((
+            equipmentId: item.id,
+            kind: null,
+          )).overrideWith((ref) async => null),
+          conditionTrendProvider((
+            equipmentId: item.id,
+            kind: ConditionTrendKind.scrubberMinutes,
+          )).overrideWith((ref) async => null),
+          childEquipmentProvider(item.id).overrideWith((ref) async => const []),
+          observationsForEquipmentProvider(
+            item.id,
+          ).overrideWith((ref) async => const []),
+          equipmentWorstClockProvider.overrideWith((ref) async => {}),
           serviceRecordNotifierProvider(
             item.id,
           ).overrideWith((ref) => _MockServiceRecordNotifier()),
@@ -88,6 +120,16 @@ void main() {
     );
     await pumpDetail(tester, item: legacyOverdue, clockStatuses: const []);
     expect(find.text('Service is overdue!'), findsNothing);
+  });
+
+  testWidgets('the Components card is on the page', (tester) async {
+    const item = EquipmentItem(
+      id: 'e1',
+      name: 'Reg',
+      type: EquipmentType.regulator,
+    );
+    await pumpDetail(tester, item: item, clockStatuses: const []);
+    expect(find.text('Components'), findsOneWidget);
   });
 
   testWidgets('overdue banner shows when a clock is overdue', (tester) async {

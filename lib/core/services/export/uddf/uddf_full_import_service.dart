@@ -5,6 +5,7 @@ import 'package:xml/xml.dart';
 import 'package:submersion/core/constants/enums.dart' as enums;
 import 'package:submersion/core/services/logger_service.dart';
 import 'package:submersion/core/services/export/models/uddf_import_result.dart';
+import 'package:submersion/core/services/export/uddf/uddf_buddy_roles.dart';
 import 'package:submersion/core/services/export/uddf/uddf_dump_codec.dart';
 import 'package:submersion/core/services/export/uddf/uddf_import_parsers.dart';
 import 'package:submersion/core/services/export/uddf/uddf_normalizer.dart';
@@ -232,6 +233,7 @@ class UddfFullImportService {
     final settings = <String, String>{};
     final tags = <Map<String, dynamic>>[];
     final customDiveTypes = <Map<String, dynamic>>[];
+    final customSiteTypes = <Map<String, dynamic>>[];
     final customDiveRoles = <Map<String, dynamic>>[];
     final diveComputers = <Map<String, dynamic>>[];
     final equipmentSets = <Map<String, dynamic>>[];
@@ -369,6 +371,21 @@ class UddfFullImportService {
           }
         }
 
+        // Parse custom site types (issue #1765)
+        final siteTypesSection = submersionElement
+            .findElements('sitetypes')
+            .firstOrNull;
+        if (siteTypesSection != null) {
+          for (final typeElement in siteTypesSection.findElements('sitetype')) {
+            final typeData = UddfImportParsers.parseSiteTypeElement(
+              typeElement,
+            );
+            if (typeData.isNotEmpty) {
+              customSiteTypes.add(typeData);
+            }
+          }
+        }
+
         // Parse custom dive roles (#551)
         final diveRolesSection = submersionElement
             .findElements('diveroles')
@@ -414,6 +431,67 @@ class UddfFullImportService {
           }
         }
 
+        // Assembly templates (issue #1487) ride on the parent item's map
+        // as `components`, so the wizard's flattening keeps them. A row
+        // whose parent is not on file, or with a blank end, is dropped.
+        final componentsSection = submersionElement
+            .findElements('components')
+            .firstOrNull;
+        if (componentsSection != null) {
+          final byParent = <String, List<Map<String, dynamic>>>{};
+          for (final element in componentsSection.findElements('component')) {
+            final data = UddfImportParsers.parseComponent(element);
+            final parentRef = data['parentRef'] as String;
+            final componentRef = data['componentRef'] as String;
+            if (parentRef.isEmpty || componentRef.isEmpty) continue;
+            byParent.putIfAbsent(parentRef, () => []).add({
+              'componentRef': componentRef,
+              'role': data['role'],
+              'sortOrder': data['sortOrder'],
+            });
+          }
+          for (final item in equipment) {
+            final parts = byParent[item['uddfId']];
+            if (parts != null) item['components'] = parts;
+          }
+        }
+
+        // Gear provenance per dive rides on the dive's map as `gearLinks`,
+        // matched through the <dive id> already captured as sourceUuid.
+        final gearLinksSection = submersionElement
+            .findElements('gearlinks')
+            .firstOrNull;
+        if (gearLinksSection != null) {
+          final byDive = UddfImportParsers.parseGearLinks(gearLinksSection);
+          for (final dive in dives) {
+            final links = byDive[dive['sourceUuid']];
+            if (links != null && links.isNotEmpty) dive['gearLinks'] = links;
+          }
+        }
+
+        // Exact per-dive roles (issue #1737), matched the same way. Parsed
+        // after <diveroles>, so a custom role the file declares is known.
+        final buddyRolesSection = submersionElement
+            .findElements('buddyroles')
+            .firstOrNull;
+        if (buddyRolesSection != null) {
+          final byDive = UddfBuddyRoles.parse(buddyRolesSection);
+          final declaredRoleIds = {
+            for (final role in customDiveRoles)
+              if (role['id'] is String) role['id'] as String,
+          };
+          for (final dive in dives) {
+            final rows = byDive[dive['sourceUuid']];
+            if (rows == null || rows.isEmpty) continue;
+            UddfBuddyRoles.applyExactRoles(
+              dive,
+              rows,
+              declaredBuddies: buddyMap.keys.toSet(),
+              declaredRoleIds: declaredRoleIds,
+            );
+          }
+        }
+
         // Parse courses
         final coursesSection = submersionElement
             .findElements('courses')
@@ -453,9 +531,28 @@ class UddfFullImportService {
       }
     }
 
+    // Every source of role links has now been read, so each person can be
+    // left holding exactly one role per dive.
+    for (final dive in dives) {
+      UddfBuddyRoles.settle(dive, buddyMap);
+    }
+
     _applyTripDateRanges(trips, dives);
 
     final sources = _parseDataSources(uddfElement);
+
+    // Each dive's <source> entries also ride on its own map as `dataSources`,
+    // like `gearLinks` above. The import wizard flattens this result into
+    // entity lists and rebuilds it without dataSourcesByDiveRef, so a restore
+    // through it otherwise saw no sources at all: no restored source rows,
+    // and no GPS for a backup that kept it only there (#1735).
+    for (final dive in dives) {
+      final entries = UddfImportResult.sourcesForDive(
+        sources.byDiveRef,
+        dive['sourceUuid'] as String?,
+      );
+      if (entries.isNotEmpty) dive['dataSources'] = entries;
+    }
 
     return UddfImportResult(
       dataSourcesByDiveRef: sources.byDiveRef,
@@ -474,6 +571,7 @@ class UddfFullImportService {
       trips: trips,
       tags: tags,
       customDiveTypes: customDiveTypes,
+      customSiteTypes: customSiteTypes,
       customDiveRoles: customDiveRoles,
       diveComputers: diveComputers,
       equipmentSets: equipmentSets,
@@ -873,6 +971,38 @@ class UddfFullImportService {
     return site;
   }
 
+  /// Pairs the inline `<buddy>` [name] on one dive with a declared person
+  /// ([buddies], keyed by `<buddy id>`), case-insensitively, and returns
+  /// whether it found one.
+  ///
+  /// Submersion's export links each participant and also names them
+  /// inline, so a name first pairs with a person the dive already links
+  /// ([buddyRefs]) and no earlier name took ([paired]); otherwise it would
+  /// come back as a second, unmatched person (#1806). Only then does it
+  /// link a declared person the dive does not link yet, as third-party
+  /// files may name people inline only.
+  static bool _pairInlineBuddy(
+    String name,
+    Map<String, Map<String, dynamic>> buddies,
+    List<String> buddyRefs,
+    Set<String> paired,
+  ) {
+    final key = name.toLowerCase();
+    final namesakes = [
+      for (final entry in buddies.entries)
+        if ((entry.value['name'] as String?)?.toLowerCase() == key) entry.key,
+    ];
+    final linked = namesakes
+        .where((ref) => buddyRefs.contains(ref) && !paired.contains(ref))
+        .firstOrNull;
+    final ref =
+        linked ?? namesakes.where((r) => !buddyRefs.contains(r)).firstOrNull;
+    if (ref == null) return false;
+    if (linked == null) buddyRefs.add(ref);
+    paired.add(ref);
+    return true;
+  }
+
   Map<String, dynamic> _parseFullDive(
     XmlElement diveElement,
     Map<String, Map<String, dynamic>> sites,
@@ -890,6 +1020,7 @@ class UddfFullImportService {
       decoModels,
       diveComputers,
     );
+    UddfImportParsers.dropInventedSubmersionProfile(diveElement, diveData);
 
     // Capture the source UUID from the <dive> element's id attribute so
     // downstream consumers (e.g., dive_data_sources sidecar) can persist it.
@@ -898,15 +1029,24 @@ class UddfFullImportService {
       diveData['sourceUuid'] = diveId;
     }
 
+    // Declared people an inline <buddy> name has already paired with (see
+    // _pairInlineBuddy), shared by the before- and after-dive passes.
+    final pairedInline = <String>{};
+
     // Parse additional fields from informationbeforedive
     final beforeElement = diveElement
         .findElements('informationbeforedive')
         .firstOrNull;
     if (beforeElement != null) {
-      diveData['diveMaster'] = UddfImportParsers.getElementText(
+      // The names in <divemaster> become dive guide links rather than
+      // free text on the dive (issue #1737).
+      final leaderNames = UddfImportParsers.getElementText(
         beforeElement,
         'divemaster',
       );
+      if (leaderNames != null) {
+        UddfBuddyRoles.recordLeaderText(diveData, leaderNames);
+      }
 
       final diveTypeElements = beforeElement.findElements('divetype').toList();
       if (diveTypeElements.isNotEmpty) {
@@ -926,6 +1066,14 @@ class UddfFullImportService {
         );
       }
 
+      // The dive's own entry fix, under the keys every other import format
+      // uses for it (#1735).
+      if (UddfImportParsers.parseDiveGps(beforeElement, 'entry')
+          case final fix?) {
+        diveData['latitude'] = fix.latitude;
+        diveData['longitude'] = fix.longitude;
+      }
+
       // Parse dive mode
       final diveMode = UddfImportParsers.parseDiveModeIn(beforeElement);
       if (diveMode != null) {
@@ -939,6 +1087,17 @@ class UddfFullImportService {
       );
       if (isPlanned?.toLowerCase() == 'true') {
         diveData['isPlanned'] = true;
+      }
+
+      // The logbook owner's own role on the dive (custom element). The
+      // importer checks the id against the database, since a dives-only
+      // file declares no custom roles yet may name one already present.
+      final diverRole = UddfImportParsers.getElementText(
+        beforeElement,
+        'diverrole',
+      );
+      if (diverRole != null && diverRole.isNotEmpty) {
+        diveData['diverRoleId'] = diverRole;
       }
 
       // Parse entry time
@@ -1012,18 +1171,12 @@ class UddfFullImportService {
             lastName,
           ].whereType<String>().where((s) => s.isNotEmpty).join(' ').trim();
           if (buddyName.isNotEmpty) {
-            // Find matching buddy record by name
-            bool found = false;
-            for (final entry in buddies.entries) {
-              final recordName = entry.value['name'] as String?;
-              if (recordName != null &&
-                  recordName.toLowerCase() == buddyName.toLowerCase() &&
-                  !buddyRefs.contains(entry.key)) {
-                buddyRefs.add(entry.key);
-                found = true;
-                break;
-              }
-            }
+            final found = _pairInlineBuddy(
+              buddyName,
+              buddies,
+              buddyRefs,
+              pairedInline,
+            );
             // Track unmatched names to create buddies during import
             if (!found && !unmatchedBuddyNames.contains(buddyName)) {
               unmatchedBuddyNames.add(buddyName);
@@ -1112,6 +1265,12 @@ class UddfFullImportService {
         );
       }
 
+      if (UddfImportParsers.parseDiveGps(afterElement, 'exit')
+          case final fix?) {
+        diveData['exitLatitude'] = fix.latitude;
+        diveData['exitLongitude'] = fix.longitude;
+      }
+
       // Parse weight used
       final weightElement = afterElement.findElements('weightused').firstOrNull;
       if (weightElement != null) {
@@ -1198,18 +1357,12 @@ class UddfFullImportService {
             lastName,
           ].whereType<String>().where((s) => s.isNotEmpty).join(' ').trim();
           if (buddyName.isNotEmpty) {
-            // Find matching buddy record by name
-            bool found = false;
-            for (final entry in buddies.entries) {
-              final recordName = entry.value['name'] as String?;
-              if (recordName != null &&
-                  recordName.toLowerCase() == buddyName.toLowerCase() &&
-                  !buddyRefs.contains(entry.key)) {
-                buddyRefs.add(entry.key);
-                found = true;
-                break;
-              }
-            }
+            final found = _pairInlineBuddy(
+              buddyName,
+              buddies,
+              buddyRefs,
+              pairedInline,
+            );
             // Track unmatched names to create buddies during import
             if (!found && !unmatchedBuddyNames.contains(buddyName)) {
               unmatchedBuddyNames.add(buddyName);

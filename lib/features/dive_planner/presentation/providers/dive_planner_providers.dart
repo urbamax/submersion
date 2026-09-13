@@ -4,12 +4,14 @@ import 'package:submersion/core/constants/enums.dart';
 import 'package:submersion/core/constants/units.dart';
 import 'package:submersion/core/deco/entities/dive_environment.dart';
 import 'package:submersion/core/deco/entities/tissue_compartment.dart';
+import 'package:submersion/core/deco/schedule_policy.dart' show AirBreakPolicy;
 import 'package:submersion/core/providers/provider.dart';
 import 'package:submersion/features/dive_log/domain/entities/dive.dart';
 import 'package:submersion/features/settings/presentation/providers/settings_providers.dart';
 import 'package:submersion/features/dive_planner/data/services/plan_calculator_service.dart';
 import 'package:submersion/features/dive_planner/domain/entities/plan_result.dart';
 import 'package:submersion/features/dive_planner/domain/entities/plan_segment.dart';
+import 'package:submersion/features/equipment/domain/entities/gear_provenance.dart';
 import 'package:submersion/features/planner/data/repositories/dive_plan_repository.dart';
 import 'package:submersion/features/planner/domain/entities/dive_plan.dart'
     as domain;
@@ -67,6 +69,7 @@ class DivePlanNotifier extends StateNotifier<DivePlanState> {
   final PlanCalculatorService _calculator;
   final double Function() _getDefaultReservePressure;
   final PlanGradientFactors Function() _getDefaultGradientFactors;
+  final PlannerWaterType Function() _getDefaultPlannerWaterType;
   final DivePlanRepository? _repository;
 
   /// The persisted aggregate this state was loaded from (or last saved as);
@@ -93,6 +96,7 @@ class DivePlanNotifier extends StateNotifier<DivePlanState> {
     double reservePressure = DivePlanState.kDefaultReservePressureBar,
     double Function()? getDefaultReservePressure,
     PlanGradientFactors Function()? getDefaultGradientFactors,
+    PlannerWaterType Function()? getDefaultPlannerWaterType,
     DivePlanRepository? repository,
   }) {
     return DivePlanNotifier._(
@@ -101,6 +105,8 @@ class DivePlanNotifier extends StateNotifier<DivePlanState> {
           getDefaultReservePressure ?? (() => reservePressure),
       getDefaultGradientFactors:
           getDefaultGradientFactors ?? _fallbackGradientFactors,
+      getDefaultPlannerWaterType:
+          getDefaultPlannerWaterType ?? (() => PlannerWaterType.salt),
       repository: repository,
     );
   }
@@ -109,26 +115,42 @@ class DivePlanNotifier extends StateNotifier<DivePlanState> {
     this._calculator, {
     required double Function() getDefaultReservePressure,
     required PlanGradientFactors Function() getDefaultGradientFactors,
+    required PlannerWaterType Function() getDefaultPlannerWaterType,
     DivePlanRepository? repository,
   }) : _getDefaultReservePressure = getDefaultReservePressure,
        _getDefaultGradientFactors = getDefaultGradientFactors,
+       _getDefaultPlannerWaterType = getDefaultPlannerWaterType,
        _repository = repository,
        super(
          _createInitialState(
            reservePressure: getDefaultReservePressure(),
            getGradientFactors: getDefaultGradientFactors,
+           plannerWaterType: getDefaultPlannerWaterType(),
          ),
        );
 
   static PlanGradientFactors _fallbackGradientFactors() =>
       (low: DivePlanState.kFallbackGfLow, high: DivePlanState.kFallbackGfHigh);
 
+  static ({WaterType? waterType, double? salinityPpt}) _waterFieldsFor(
+    PlannerWaterType type,
+  ) => switch (type) {
+    PlannerWaterType.salt => (waterType: WaterType.salt, salinityPpt: null),
+    PlannerWaterType.fresh => (waterType: WaterType.fresh, salinityPpt: null),
+    PlannerWaterType.custom => (
+      waterType: null,
+      salinityPpt: DiveEnvironment.typicalSeaSalinityPpt,
+    ),
+  };
+
   static DivePlanState _createInitialState({
     required double reservePressure,
     required PlanGradientFactors Function() getGradientFactors,
+    required PlannerWaterType plannerWaterType,
   }) {
     final now = DateTime.now();
     final gradientFactors = getGradientFactors();
+    final water = _waterFieldsFor(plannerWaterType);
     return DivePlanState(
       id: _uuid.v4(),
       name: 'New Dive Plan',
@@ -137,6 +159,8 @@ class DivePlanNotifier extends StateNotifier<DivePlanState> {
       gfLow: gradientFactors.low,
       gfHigh: gradientFactors.high,
       reservePressure: reservePressure,
+      waterType: water.waterType,
+      salinityPpt: water.salinityPpt,
       createdAt: now,
       updatedAt: now,
     );
@@ -165,6 +189,7 @@ class DivePlanNotifier extends StateNotifier<DivePlanState> {
     state = _createInitialState(
       reservePressure: _getDefaultReservePressure(),
       getGradientFactors: _getDefaultGradientFactors,
+      plannerWaterType: _getDefaultPlannerWaterType(),
     );
   }
 
@@ -186,6 +211,22 @@ class DivePlanNotifier extends StateNotifier<DivePlanState> {
     state = state.copyWith(
       gfLow: gradientFactors.low,
       gfHigh: gradientFactors.high,
+    );
+  }
+
+  /// Move an untouched plan onto the diver's current planner water default.
+  void adoptPlannerWaterIfPristine(PlannerWaterType type) {
+    if (isPersisted || state.isDirty || state.segments.isNotEmpty) return;
+    final water = _waterFieldsFor(type);
+    if (state.waterType == water.waterType &&
+        state.salinityPpt == water.salinityPpt) {
+      return;
+    }
+    state = state.copyWith(
+      waterType: water.waterType,
+      clearWaterType: water.waterType == null,
+      salinityPpt: water.salinityPpt,
+      clearSalinityPpt: water.salinityPpt == null,
     );
   }
 
@@ -355,9 +396,23 @@ class DivePlanNotifier extends StateNotifier<DivePlanState> {
   }
 
   /// Replace the equipment attached to the plan (Gear & Weights, v104).
+  ///
+  /// Provenance follows the ids so the two never drift (#1487): an id that
+  /// survives keeps its row, a new id starts as a loose row, and a dropped
+  /// id takes its row with it.
   void setEquipmentIds(List<String> ids) {
+    final byId = {for (final p in state.gearProvenance) p.equipmentId: p};
+    setGear(ids, [
+      for (final id in ids) byId[id] ?? GearProvenance(equipmentId: id),
+    ]);
+  }
+
+  /// Replace the gear and its provenance in one step, so the ids and their
+  /// assembly and set pointers never disagree (issue #1487).
+  void setGear(List<String> ids, List<GearProvenance> provenance) {
     state = state.copyWith(
       equipmentIds: ids,
+      gearProvenance: provenance,
       isDirty: true,
       updatedAt: DateTime.now(),
     );
@@ -369,6 +424,25 @@ class DivePlanNotifier extends StateNotifier<DivePlanState> {
       plannedWeightKg: totalKg,
       plannedWeightPlacement: placement,
       clearPlannedWeight: totalKg == null,
+      isDirty: true,
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  /// Set (or clear, with `seconds: null` or `<= 0`) the diver-authored
+  /// minimum hold time for the stop at [depthMeters].
+  ///
+  /// Immutable map update: builds a new map rather than mutating
+  /// [state.stopMinimums] in place.
+  void setStopMinimum(int depthMeters, int? seconds) {
+    final updated = Map<int, int>.from(state.stopMinimums);
+    if (seconds == null || seconds <= 0) {
+      updated.remove(depthMeters);
+    } else {
+      updated[depthMeters] = seconds;
+    }
+    state = state.copyWith(
+      stopMinimums: updated,
       isDirty: true,
       updatedAt: DateTime.now(),
     );
@@ -504,10 +578,95 @@ class DivePlanNotifier extends StateNotifier<DivePlanState> {
     );
   }
 
+  /// Update water type for decompression density. Null clears the choice and
+  /// leaves the plan on the planner's salt-water fallback.
+  /// Clears a custom salinity so a preset is not mixed with an override.
+  void updateWaterType(WaterType? waterType) {
+    state = state.copyWith(
+      waterType: waterType,
+      clearWaterType: waterType == null,
+      clearSalinityPpt: true,
+      isDirty: true,
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  /// Switch to custom salinity (ppt). Seeds seawater (35 ppt) when the plan
+  /// has no value yet, or the equivalent of a leftover brackish type.
+  void selectCustomSalinity() {
+    final seed =
+        state.salinityPpt ??
+        (state.waterType == null
+            ? DiveEnvironment.typicalSeaSalinityPpt
+            : DiveEnvironment.salinityPptFromDensity(
+                DiveEnvironment.forConditions(
+                  waterType: state.waterType,
+                ).waterDensityKgM3,
+              ));
+    updateSalinityPpt(seed);
+  }
+
+  /// Custom salinity in ppt. Clears [DivePlanState.waterType] so density
+  /// comes only from this value.
+  void updateSalinityPpt(double? salinityPpt) {
+    state = state.copyWith(
+      salinityPpt: salinityPpt,
+      clearSalinityPpt: salinityPpt == null,
+      clearWaterType: true,
+      isDirty: true,
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  /// Set the air-break (back-gas break) policy for long O2 deco stops; null
+  /// disables air breaks.
+  void setAirBreaks(AirBreakPolicy? policy) {
+    state = state.copyWith(
+      airBreaks: policy,
+      clearAirBreaks: policy == null,
+      isDirty: true,
+      updatedAt: DateTime.now(),
+    );
+  }
+
   /// Update reserve pressure in bar.
   void updateReservePressure(double reservePressure) {
     state = state.copyWith(
       reservePressure: reservePressure,
+      isDirty: true,
+      updatedAt: DateTime.now(),
+    );
+  }
+
+  /// Update the Subsurface-style Gas options; only supplied values change.
+  /// [sacDeco], [ppO2Bottom], [ppO2Deco], and [o2Narcotic] are nullable
+  /// overrides of the app-wide settings (or, for [sacDeco], of the 0.8x-of-
+  /// bottom fallback) - pass the matching `clear*` flag to fall back again.
+  void updateGasOptions({
+    double? sacDeco,
+    bool clearSacDeco = false,
+    double? sacFactor,
+    int? problemSolvingMinutes,
+    double? ppO2Bottom,
+    bool clearPpO2Bottom = false,
+    double? ppO2Deco,
+    bool clearPpO2Deco = false,
+    double? bestMixEndMeters,
+    bool? o2Narcotic,
+    bool clearO2Narcotic = false,
+  }) {
+    state = state.copyWith(
+      sacDeco: sacDeco,
+      clearSacDeco: clearSacDeco,
+      sacFactor: sacFactor,
+      problemSolvingMinutes: problemSolvingMinutes,
+      ppO2Bottom: ppO2Bottom,
+      clearPpO2Bottom: clearPpO2Bottom,
+      ppO2Deco: ppO2Deco,
+      clearPpO2Deco: clearPpO2Deco,
+      bestMixEndMeters: bestMixEndMeters,
+      o2Narcotic: o2Narcotic,
+      clearO2Narcotic: clearO2Narcotic,
       isDirty: true,
       updatedAt: DateTime.now(),
     );
@@ -670,6 +829,7 @@ class DivePlanNotifier extends StateNotifier<DivePlanState> {
       profile: profilePoints,
       notes: state.notes,
       altitude: state.altitude,
+      waterType: state.waterType,
       gradientFactorLow: state.gfLow,
       gradientFactorHigh: state.gfHigh,
       isPlanned: true,
@@ -708,6 +868,8 @@ final divePlanNotifierProvider =
         reservePressure: defaultReserve(),
         getDefaultReservePressure: defaultReserve,
         getDefaultGradientFactors: defaultGradientFactors,
+        getDefaultPlannerWaterType: () =>
+            read(settingsProvider).defaultPlannerWaterType,
         repository: read(divePlanRepositoryProvider),
       );
 
@@ -717,6 +879,10 @@ final divePlanNotifierProvider =
       ref.listen<PlanGradientFactors>(
         planGradientFactorSettingsProvider,
         (_, next) => notifier.adoptGradientFactorsIfPristine(next),
+      );
+      ref.listen<PlannerWaterType>(
+        settingsProvider.select((s) => s.defaultPlannerWaterType),
+        (_, next) => notifier.adoptPlannerWaterIfPristine(next),
       );
 
       return notifier;
@@ -751,10 +917,13 @@ final planResultsProvider = Provider<PlanResult>((ref) {
     sacRate: state.sacRate,
     reservePressure: state.reservePressure,
     initialTissueState: state.initialTissueState,
-    // Altitude finally reaches the deco math; 0 keeps the legacy sea-level
-    // surface pressure. Water type comes to the planner in Phase 2.
+    // Altitude 0 keeps the legacy sea-level surface pressure. Null water
+    // type is salt, matching the planner default - though a custom salinity,
+    // when set, overrides either one (see DiveEnvironment's precedence).
     environment: DiveEnvironment.forConditions(
       altitudeMeters: (state.altitude ?? 0) > 0 ? state.altitude : null,
+      waterType: state.waterType ?? WaterType.salt,
+      salinityPpt: state.salinityPpt,
     ),
   );
 });

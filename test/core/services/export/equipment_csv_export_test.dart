@@ -47,6 +47,29 @@ void main() {
     expect(lines[1], contains('2.5'));
   });
 
+  test('Metric mode writes a hose length in canonical metres, as its key '
+      'says', () {
+    // Metric mode is the raw data export: "hose_length_m=15" would claim
+    // metres for an inch value, so the stored metres go out unconverted. My
+    // units writes "hose_length=<n> in" instead (issue #1813).
+    final csv = CsvExportService().generateEquipmentCsvContent([
+      EquipmentItem(
+        id: 'h1',
+        name: 'Long hose',
+        type: EquipmentType.hose,
+        attributes: [
+          EquipmentAttribute.curated(
+            equipmentId: 'h1',
+            key: 'hose_length_m',
+            valueNum: 0.381,
+          ),
+        ],
+      ),
+    ]);
+
+    expect(csv.split('\n')[1], contains('hose_length_m=0.381'));
+  });
+
   test('custom field colliding with a curated key is not dropped', () {
     final csv = CsvExportService().generateEquipmentCsvContent([
       const EquipmentItem(

@@ -804,6 +804,16 @@ GasMix::GasMix(
     o2_percent_(o2_percent),
     he_percent_(he_percent) {}
 
+GasMix::GasMix(
+  int64_t index,
+  double o2_percent,
+  double he_percent,
+  const int64_t* usage)
+ : index_(index),
+    o2_percent_(o2_percent),
+    he_percent_(he_percent),
+    usage_(usage ? std::optional<int64_t>(*usage) : std::nullopt) {}
+
 int64_t GasMix::index() const {
   return index_;
 }
@@ -831,12 +841,26 @@ void GasMix::set_he_percent(double value_arg) {
 }
 
 
+const int64_t* GasMix::usage() const {
+  return usage_ ? &(*usage_) : nullptr;
+}
+
+void GasMix::set_usage(const int64_t* value_arg) {
+  usage_ = value_arg ? std::optional<int64_t>(*value_arg) : std::nullopt;
+}
+
+void GasMix::set_usage(int64_t value_arg) {
+  usage_ = value_arg;
+}
+
+
 EncodableList GasMix::ToEncodableList() const {
   EncodableList list;
-  list.reserve(3);
+  list.reserve(4);
   list.push_back(EncodableValue(index_));
   list.push_back(EncodableValue(o2_percent_));
   list.push_back(EncodableValue(he_percent_));
+  list.push_back(usage_ ? EncodableValue(*usage_) : EncodableValue());
   return list;
 }
 
@@ -845,6 +869,10 @@ GasMix GasMix::FromEncodableList(const EncodableList& list) {
     std::get<int64_t>(list[0]),
     std::get<double>(list[1]),
     std::get<double>(list[2]));
+  auto& encodable_usage = list[3];
+  if (!encodable_usage.IsNull()) {
+    decoded.set_usage(std::get<int64_t>(encodable_usage));
+  }
   return decoded;
 }
 
@@ -1888,7 +1916,13 @@ void DiveComputerHostApi::SetUp(
           const auto& device_arg = std::any_cast<const DiscoveredDevice&>(std::get<CustomEncodableValue>(encodable_device_arg));
           const auto& encodable_fingerprint_arg = args.at(1);
           const auto* fingerprint_arg = std::get_if<std::string>(&encodable_fingerprint_arg);
-          api->StartDownload(device_arg, fingerprint_arg, [reply](std::optional<FlutterError>&& output) {
+          const auto& encodable_sync_clock_arg = args.at(2);
+          if (encodable_sync_clock_arg.IsNull()) {
+            reply(WrapError("sync_clock_arg unexpectedly null."));
+            return;
+          }
+          const auto& sync_clock_arg = std::get<bool>(encodable_sync_clock_arg);
+          api->StartDownload(device_arg, fingerprint_arg, sync_clock_arg, [reply](std::optional<FlutterError>&& output) {
             if (output.has_value()) {
               reply(WrapError(output.value()));
               return;
@@ -2156,6 +2190,7 @@ void DiveComputerFlutterApi::OnDownloadComplete(
   int64_t total_dives_arg,
   const std::string* serial_number_arg,
   const std::string* firmware_version_arg,
+  const std::string* clock_sync_status_arg,
   std::function<void(void)>&& on_success,
   std::function<void(const FlutterError&)>&& on_error) {
   const std::string channel_name = "dev.flutter.pigeon.libdivecomputer_plugin.DiveComputerFlutterApi.onDownloadComplete" + message_channel_suffix_;
@@ -2164,6 +2199,7 @@ void DiveComputerFlutterApi::OnDownloadComplete(
     EncodableValue(total_dives_arg),
     serial_number_arg ? EncodableValue(*serial_number_arg) : EncodableValue(),
     firmware_version_arg ? EncodableValue(*firmware_version_arg) : EncodableValue(),
+    clock_sync_status_arg ? EncodableValue(*clock_sync_status_arg) : EncodableValue(),
   });
   channel.Send(encoded_api_arguments, [channel_name, on_success = std::move(on_success), on_error = std::move(on_error)](const uint8_t* reply, size_t reply_size) {
     std::unique_ptr<EncodableValue> response = GetCodec().DecodeMessage(reply, reply_size);

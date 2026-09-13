@@ -44,7 +44,8 @@ class ReviewStep extends ConsumerWidget {
     final projectedDiveNumbers = _computeProjectedDiveNumbers(
       bundle: bundle,
       nextDiveNumber: nextDiveNumber.value,
-      retainSource: state.retainSourceDiveNumbers,
+      retainSource:
+          state.retainSourceDiveNumbers && bundle.hasSourceDiveNumbers,
       selections: state.selections[ImportEntityType.dives] ?? const {},
       duplicateActions:
           state.duplicateActions[ImportEntityType.dives] ?? const {},
@@ -72,6 +73,11 @@ class ReviewStep extends ConsumerWidget {
   /// Only assigns numbers to dives that will actually be imported as new
   /// (selected non-duplicates + duplicates with "Import as New" action).
   /// Skipped and consolidated dives are excluded.
+  ///
+  /// With [retainSource] on, each dive shows the number its source recorded.
+  /// A dive whose source recorded none gets no projected number: what it
+  /// ends up with depends on the source, so the preview does not guess
+  /// (issue #1832).
   static Map<int, int>? _computeProjectedDiveNumbers({
     required ImportBundle bundle,
     required int? nextDiveNumber,
@@ -81,7 +87,7 @@ class ReviewStep extends ConsumerWidget {
     required Set<int> duplicateIndices,
   }) {
     final group = bundle.groups[ImportEntityType.dives];
-    if (group == null || nextDiveNumber == null) return null;
+    if (group == null) return null;
 
     final items = group.items;
 
@@ -98,6 +104,11 @@ class ReviewStep extends ConsumerWidget {
         importIndices.add(i);
       }
     }
+
+    if (retainSource) {
+      return {for (final i in importIndices) i: ?items[i].diveData?.diveNumber};
+    }
+    if (nextDiveNumber == null) return null;
 
     // Build (index, startTime) pairs for sorting.
     final indexed = <(int, DateTime)>[];
@@ -152,6 +163,13 @@ class _MultiTypeLayoutState extends State<_MultiTypeLayout> {
   void _showImportOptions(BuildContext context) {
     showModalBottomSheet(
       context: context,
+      // Two switches plus a tag field that grows with every chip added can
+      // outgrow the sheet's default ~half-screen cap (issue #998 follow-up
+      // added the second switch). isScrollControlled lets it grow with its
+      // content instead of being squeezed into that fixed fraction; the
+      // sheet's own body still scrolls internally as a second line of
+      // defense once content exceeds even the full screen.
+      isScrollControlled: true,
       builder: (_) => _ImportOptionsSheet(
         notifier: widget.notifier,
         existingTags: widget.existingTags,
@@ -332,6 +350,8 @@ class _EntityTab extends StatelessWidget {
         availableActions: availableActions,
         pendingIndices: state.pendingFor(type),
         onToggleSelection: (i) => notifier.toggleSelection(type, i),
+        onSetSelections: (indices, select) =>
+            notifier.setSelections(type, indices, select),
         onDuplicateActionChanged: (i, a) {
           notifier.setDuplicateAction(type, i, a);
           _showActionSnackbar(
@@ -645,8 +665,13 @@ class _ImportOptionsSheetState extends State<_ImportOptionsSheet> {
   Widget build(BuildContext context) {
     final state = _currentState;
     if (state == null) return const SizedBox.shrink();
+    final hasSourceNumbers = state.bundle?.hasSourceDiveNumbers ?? false;
 
-    return Padding(
+    return SingleChildScrollView(
+      // Second line of defense: isScrollControlled at the call site already
+      // lets the sheet grow with its content, but a small screen (or a tag
+      // field with several chips) can still exceed even that, so the body
+      // scrolls internally rather than overflowing (issue #998 follow-up).
       padding: const EdgeInsets.all(16),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -659,14 +684,36 @@ class _ImportOptionsSheetState extends State<_ImportOptionsSheet> {
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
+          // Disabled, and saying why, when no dive in this source carries a
+          // number: an enabled switch that changes nothing is what issue
+          // #1832 reported.
           SwitchListTile(
             title: Text(context.l10n.universalImport_label_retainDiveNumbers),
             subtitle: Text(
-              context.l10n.universalImport_label_retainDiveNumbersSubtitle,
+              hasSourceNumbers
+                  ? context.l10n.universalImport_label_retainDiveNumbersSubtitle
+                  : context
+                        .l10n
+                        .universalImport_label_retainDiveNumbersUnavailable,
             ),
-            value: state.retainSourceDiveNumbers,
+            value: hasSourceNumbers && state.retainSourceDiveNumbers,
+            onChanged: hasSourceNumbers
+                ? (value) => widget.notifier.setRetainSourceDiveNumbers(value)
+                : null,
+          ),
+          // Session-only override of the diver's saved auto-tag preference
+          // (issue #998 follow-up). Starts from that preference -- whatever
+          // initializeDefaultTag already seeded importTags with -- but
+          // toggling it here never writes back to the setting; it only adds
+          // or removes this one import's default tag.
+          SwitchListTile(
+            title: Text(context.l10n.universalImport_label_autoTagThisImport),
+            subtitle: Text(
+              context.l10n.universalImport_label_autoTagThisImportSubtitle,
+            ),
+            value: widget.notifier.isAutoTagForThisImportEnabled,
             onChanged: (value) =>
-                widget.notifier.setRetainSourceDiveNumbers(value),
+                widget.notifier.setAutoTagForThisImport(value),
           ),
           const Divider(),
           ImportTagsField(

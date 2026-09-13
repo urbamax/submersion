@@ -9,7 +9,24 @@ import 'dart:ui' show Color;
 /// offer, so related gear is grouped rather than alphabetised.
 enum EquipmentType {
   regulator('Regulator'),
+  // The regulator's parts (issue #1487). A diver who swaps second stages and
+  // hoses between a DIN and a yoke first stage tracks service on each part,
+  // so the parts are types of their own rather than `other` with a name.
+  firstStage('First Stage'),
+  secondStage('Second Stage'),
+  hose('Hose'),
   bcd('BCD'),
+  // The backplate-and-wing rig's parts (issue #1487): the plate is what a
+  // diver swaps between a wetsuit and a drysuit season.
+  backplate('Backplate'),
+  wing('Wing'),
+  harness('Harness'),
+  // Rig accessories requested in #1877. Divers had been filing them under
+  // BCD, which buried the real BCDs under cam bands and pouches whenever the
+  // list was filtered or grouped by type.
+  tankBand('Tank Band'),
+  weightPocket('Weight Pocket'),
+  gearPocket('Gear Pocket'),
   wetsuit('Wetsuit'),
   drysuit('Drysuit'),
   // The two drysuit layers, requested in #1537. They sit next to the suits
@@ -35,6 +52,9 @@ enum EquipmentType {
   weights('Weights'),
   light('Light'),
   camera('Camera'),
+  // Photo rig parts (issue #1487): the same strobes ride different housings.
+  housing('Housing'),
+  strobe('Strobe'),
   smb('SMB'),
   reel('Reel'),
   knife('Knife'),
@@ -43,6 +63,11 @@ enum EquipmentType {
   gloves('Gloves'),
   boots('Boots'),
   dpv('DPV'),
+  // Consumable parts that live inside another item (spec: equipment
+  // condition intelligence). Both are children of a parent item and inherit
+  // its dives from their install date.
+  o2Cell('O2 Cell'),
+  battery('Battery'),
   other('Other');
 
   final String displayName;
@@ -104,6 +129,11 @@ enum WaterType {
   final String displayName;
   const WaterType(this.displayName);
 }
+
+/// Water type for the dive planner. Logged dives still use [WaterType],
+/// which includes brackish; the planner offers salt, fresh, or a custom
+/// salinity instead.
+enum PlannerWaterType { salt, fresh, custom }
 
 /// Marine life categories
 enum SpeciesCategory {
@@ -383,11 +413,20 @@ enum EntryMethod {
 }
 
 /// Equipment status
+///
+/// Stored by [name] in a TEXT column, so declaration order only sets the
+/// order of the status dropdown and filter chips.
 enum EquipmentStatus {
   active('Active'),
+
+  /// Usable gear on the shelf rather than in the dive rotation, such as a
+  /// spare hose or O-ring kit (#1803). Still listed, serviced and reminded
+  /// like active gear; only the dive gear pickers leave it out.
+  spare('Spare'),
   needsService('Needs Service'),
   inService('In Service'),
   retired('Retired'),
+  sold('Sold'),
   loaned('Loaned Out'),
   lost('Lost');
 

@@ -11,16 +11,25 @@ import 'package:submersion/features/dive_log/domain/entities/dive.dart';
 import 'package:submersion/features/dive_log/domain/entities/profile_series.dart'
     as domain;
 import 'package:submersion/features/dive_log/domain/services/profile_series_merge.dart';
+import 'package:submersion/features/dive_log/domain/services/tank_source_index.dart';
 
 /// Repository for managing per-tank time-series pressure data
 ///
 /// This repository handles storage and retrieval of pressure readings
 /// from AI transmitters for multi-tank dives.
 class TankPressureRepository {
-  AppDatabase get _db => DatabaseService.instance.database;
-  final SyncRepository _syncRepository = SyncRepository();
-  final TankPressureSeriesRepository _tankSeries =
-      TankPressureSeriesRepository();
+  /// [database] is optional so the zero-arg construction sites keep resolving
+  /// through [DatabaseService]; services that own an [AppDatabase] (and wrap
+  /// these writes in their own transaction) pass it so the injection is real.
+  TankPressureRepository({AppDatabase? database})
+    : _database = database,
+      _syncRepository = SyncRepository(database: database),
+      _tankSeries = TankPressureSeriesRepository(database: database);
+
+  final AppDatabase? _database;
+  AppDatabase get _db => _database ?? DatabaseService.instance.database;
+  final SyncRepository _syncRepository;
+  final TankPressureSeriesRepository _tankSeries;
 
   /// Get all tank pressure data for a dive, grouped by tank ID
   ///
@@ -30,6 +39,15 @@ class TankPressureRepository {
   Future<Map<String, List<TankPressurePoint>>> getTankPressuresForDive(
     String diveId,
   ) async => _groupByTank(await _tankSeries.getSeriesForDive(diveId));
+
+  /// [getTankPressuresForDive] for many dives at once, keyed by dive id; a
+  /// dive with no pressure data is absent. One statement per chunk of ids
+  /// instead of one per dive (issue #1867).
+  Future<Map<String, Map<String, List<TankPressurePoint>>>>
+  getTankPressuresForDives(List<String> diveIds) async => {
+    for (final entry in (await _tankSeries.getSeriesForDives(diveIds)).entries)
+      entry.key: _groupByTank(entry.value),
+  };
 
   /// [getTankPressuresForDive] as one computer saw the dive: on a tank that
   /// [computerId] logged, only its series; on any other tank, every series.
@@ -149,27 +167,133 @@ class TankPressureRepository {
     });
   }
 
-  /// Move every pressure row of [fromTankId] onto [toTankId] (wrong-cylinder
-  /// repair). No transaction/notify -- the repair executor owns those.
+  /// Replace the pressure data of exactly [tankIds], leaving the series of
+  /// every tank not named intact.
+  ///
+  /// A resync keeps a `dive_tanks` row the fresh parse no longer reports
+  /// (#276: the cascade makes a wrong delete unrecoverable), so the pressure
+  /// series recorded against that tank has to be kept with it. The dive-wide
+  /// [replaceTankPressures] deletes it and tombstones it to every peer.
+  Future<void> replaceTankPressuresForTanks(
+    String diveId,
+    Iterable<String> tankIds,
+    Map<String, List<({int timestamp, double pressure})>> pressuresByTank,
+  ) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _db.transaction(() async {
+      for (final tankId in tankIds) {
+        await _tankSeries.deleteForTank(diveId, tankId);
+      }
+      await insertTankPressures(diveId, pressuresByTank);
+      await _touchDive(diveId, now);
+    });
+    SyncEventBus.notifyLocalChange();
+  }
+
+  /// Move the pressure series of [fromTankId] onto [toTankId]. Since v200 this
+  /// is an exchange: the target's previous bundle comes back to the source so
+  /// nothing is orphaned and the operation is its own inverse. No
+  /// transaction/notify -- the repair executor owns those.
   Future<void> reassignTankPressureSeries({
     required String diveId,
     required String fromTankId,
     required String toTankId,
-  }) async {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    await _tankSeries.reassignTank(diveId, fromTankId, toTankId, now: now);
-    await _touchDive(diveId, now);
-  }
+  }) => exchangeTankSources(
+    diveId: diveId,
+    tankIdA: fromTankId,
+    tankIdB: toTankId,
+  );
 
   /// Exchange the pressure series of two tanks (swapped-transmitter repair).
   Future<void> swapTankPressureSeries({
     required String diveId,
     required String tankIdA,
     required String tankIdB,
+  }) => exchangeTankSources(diveId: diveId, tankIdA: tankIdA, tankIdB: tankIdB);
+
+  /// Exchange the computer-owned bundle of two tank rows on one dive: the
+  /// parsed source index, transmitter serial, start and end pressure, and
+  /// the packed pressure series. User-authored columns (name, role, size,
+  /// gear, preset, gas mix) stay with their row.
+  ///
+  /// A row without an explicit source index is resolved first
+  /// ([effectiveSourceTankIndex]) so that re-parse keeps honoring the result:
+  /// a legacy row that had a series takes its order, one that had none takes
+  /// [kNoSourceTankIndex]. The exchange is its own inverse.
+  Future<void> exchangeTankSources({
+    required String diveId,
+    required String tankIdA,
+    required String tankIdB,
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
+    // Both rows must belong to [diveId]: a mismatched id fails here rather
+    // than silently swapping fields across dives.
+    final a =
+        await (_db.select(_db.diveTanks)
+              ..where((t) => t.id.equals(tankIdA) & t.diveId.equals(diveId)))
+            .getSingle();
+    final b =
+        await (_db.select(_db.diveTanks)
+              ..where((t) => t.id.equals(tankIdB) & t.diveId.equals(diveId)))
+            .getSingle();
+    final aHasSeries = await _hasSeries(diveId, tankIdA);
+    final bHasSeries = await _hasSeries(diveId, tankIdB);
+    final aIndex = effectiveSourceTankIndex(
+      sourceTankIndex: a.sourceTankIndex,
+      tankOrder: a.tankOrder,
+      hasSeries: aHasSeries,
+    );
+    final bIndex = effectiveSourceTankIndex(
+      sourceTankIndex: b.sourceTankIndex,
+      tankOrder: b.tankOrder,
+      hasSeries: bHasSeries,
+    );
+
+    await (_db.update(
+      _db.diveTanks,
+    )..where((t) => t.id.equals(tankIdA) & t.diveId.equals(diveId))).write(
+      DiveTanksCompanion(
+        sourceTankIndex: Value(bIndex),
+        transmitterSerial: Value(b.transmitterSerial),
+        startPressure: Value(b.startPressure),
+        endPressure: Value(b.endPressure),
+      ),
+    );
+    await (_db.update(
+      _db.diveTanks,
+    )..where((t) => t.id.equals(tankIdB) & t.diveId.equals(diveId))).write(
+      DiveTanksCompanion(
+        sourceTankIndex: Value(aIndex),
+        transmitterSerial: Value(a.transmitterSerial),
+        startPressure: Value(a.startPressure),
+        endPressure: Value(a.endPressure),
+      ),
+    );
     await _tankSeries.swapTanks(diveId, tankIdA, tankIdB, now: now);
+    await _syncRepository.markRecordPending(
+      entityType: 'diveTanks',
+      recordId: tankIdA,
+      localUpdatedAt: now,
+    );
+    await _syncRepository.markRecordPending(
+      entityType: 'diveTanks',
+      recordId: tankIdB,
+      localUpdatedAt: now,
+    );
     await _touchDive(diveId, now);
+  }
+
+  Future<bool> _hasSeries(String diveId, String tankId) async {
+    final count = _db.tankPressureSeries.id.count();
+    final row =
+        await (_db.selectOnly(_db.tankPressureSeries)
+              ..addColumns([count])
+              ..where(
+                _db.tankPressureSeries.diveId.equals(diveId) &
+                    _db.tankPressureSeries.tankId.equals(tankId),
+              ))
+            .getSingle();
+    return (row.read(count) ?? 0) > 0;
   }
 
   /// Child rows sync with the parent dive: bump + mark it pending.

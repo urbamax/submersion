@@ -19,6 +19,9 @@ class UddfImportResult {
   final List<Map<String, dynamic>> tags;
   final List<Map<String, dynamic>> customDiveTypes;
   final List<Map<String, dynamic>> customDiveRoles;
+
+  /// Custom site type definitions (`id`, `name`, `sortOrder`), issue #1765.
+  final List<Map<String, dynamic>> customSiteTypes;
   final List<Map<String, dynamic>> diveComputers;
   final List<Map<String, dynamic>> equipmentSets;
   final List<Map<String, dynamic>> courses;
@@ -60,6 +63,7 @@ class UddfImportResult {
     this.tags = const [],
     this.customDiveTypes = const [],
     this.customDiveRoles = const [],
+    this.customSiteTypes = const [],
     this.diveComputers = const [],
     this.equipmentSets = const [],
     this.courses = const [],
@@ -84,6 +88,7 @@ class UddfImportResult {
       tags.isEmpty &&
       customDiveTypes.isEmpty &&
       customDiveRoles.isEmpty &&
+      customSiteTypes.isEmpty &&
       diveComputers.isEmpty &&
       equipmentSets.isEmpty &&
       courses.isEmpty;
@@ -143,6 +148,23 @@ class UddfImportResult {
     return parts.isEmpty ? 'No data' : parts.join(', ');
   }
 
+  /// The entries in [byDiveRef] belonging to the dive whose `<dive id>` the
+  /// parser kept as [diveRef] (its `sourceUuid`).
+  ///
+  /// Submersion's own export writes `<dive id="dive_<uuid>">` and the parser
+  /// keeps that attribute verbatim, so the ref is already prefixed. A file
+  /// whose dive ids are bare needs the prefix added. Both shapes are tried
+  /// rather than assuming either, and in one place, so the parser attaching
+  /// entries to a dive and the importer reading them cannot resolve a dive
+  /// differently.
+  static List<Map<String, dynamic>> sourcesForDive(
+    Map<String, List<Map<String, dynamic>>> byDiveRef,
+    String? diveRef,
+  ) {
+    if (diveRef == null) return const [];
+    return byDiveRef[diveRef] ?? byDiveRef['dive_$diveRef'] ?? const [];
+  }
+
   /// Returns a copy with [sourceFileName] replaced.
   UddfImportResult copyWithSourceFileName(String? sourceFileName) {
     return UddfImportResult(
@@ -161,6 +183,7 @@ class UddfImportResult {
       tags: tags,
       customDiveTypes: customDiveTypes,
       customDiveRoles: customDiveRoles,
+      customSiteTypes: customSiteTypes,
       diveComputers: diveComputers,
       equipmentSets: equipmentSets,
       courses: courses,

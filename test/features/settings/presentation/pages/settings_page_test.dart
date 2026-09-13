@@ -1,11 +1,16 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:submersion/core/constants/enums.dart';
 import 'package:submersion/core/constants/gas_consumption_display.dart';
 import 'package:submersion/core/constants/gas_model.dart';
+import 'package:submersion/features/bathymetry/application/bathymetry_providers.dart';
+import 'package:submersion/features/bathymetry/data/sources/swissbathy3d_source.dart';
 import 'package:submersion/core/theme/feature_accent_colors.dart';
 import 'package:submersion/features/dive_log/domain/entities/safety_finding.dart';
+import 'package:submersion/features/equipment/domain/entities/equipment_finding.dart';
 import 'package:submersion/features/safety/domain/services/no_fly_service.dart';
 import 'package:go_router/go_router.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -165,6 +170,10 @@ class _MockSettingsNotifier extends StateNotifier<AppSettings>
       state = state.copyWith(gasModel: model);
 
   @override
+  Future<void> setDefaultPlannerWaterType(PlannerWaterType type) async =>
+      state = state.copyWith(defaultPlannerWaterType: type);
+
+  @override
   Future<void> setDefaultCurrency(String currencyCode) async =>
       state = state.copyWith(defaultCurrency: currencyCode);
   @override
@@ -258,6 +267,15 @@ class _MockSettingsNotifier extends StateNotifier<AppSettings>
   Future<void> setSafetyReviewEnabled(bool value) async =>
       state = state.copyWith(safetyReviewEnabled: value);
   @override
+  Future<void> setColdWaterThresholdC(double value) async =>
+      state = state.copyWith(coldWaterThresholdC: value);
+  @override
+  Future<void> setDeepDiveThresholdM(double value) async =>
+      state = state.copyWith(deepDiveThresholdM: value);
+  @override
+  Future<void> setHighO2ThresholdPercent(double value) async =>
+      state = state.copyWith(highO2ThresholdPercent: value);
+  @override
   Future<void> setNoFlyPreset(NoFlyPreset preset) async =>
       state = state.copyWith(noFlyPreset: preset);
   @override
@@ -301,6 +319,24 @@ class _MockSettingsNotifier extends StateNotifier<AppSettings>
       rules.add(rule.dbValue);
     }
     state = state.copyWith(safetyReviewDisabledRules: rules);
+  }
+
+  @override
+  Future<void> setConditionEngineEnabled(bool value) async =>
+      state = state.copyWith(conditionEngineEnabled: value);
+
+  @override
+  Future<void> setConditionRuleEnabled(
+    ConditionRuleId rule,
+    bool enabled,
+  ) async {
+    final rules = {...state.conditionDisabledRules};
+    if (enabled) {
+      rules.remove(rule.dbValue);
+    } else {
+      rules.add(rule.dbValue);
+    }
+    state = state.copyWith(conditionDisabledRules: rules);
   }
 
   @override
@@ -388,6 +424,12 @@ class _MockSettingsNotifier extends StateNotifier<AppSettings>
   @override
   Future<void> setShowMapBackgroundOnDiveCards(bool value) async =>
       state = state.copyWith(showMapBackgroundOnDiveCards: value);
+  @override
+  Future<void> setGroupTripsInDiveList(bool value) async =>
+      state = state.copyWith(groupTripsInDiveList: value);
+  @override
+  Future<void> setAutoTagImports(bool value) async =>
+      state = state.copyWith(autoTagImports: value);
   @override
   Future<void> setShowMapBackgroundOnSiteCards(bool value) async =>
       state = state.copyWith(showMapBackgroundOnSiteCards: value);
@@ -996,6 +1038,19 @@ void main() {
       ];
     }
 
+    testWidgets('shows a Diagnostics card without debug mode (#1826)', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildAboutWidget(await aboutOverrides()));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 6));
+
+      await tester.scrollUntilVisible(find.text('Copy diagnostics'), 100);
+      expect(find.text('Diagnostics'), findsOneWidget);
+      expect(find.text('View log'), findsOneWidget);
+      expect(find.text('Copy diagnostics'), findsOneWidget);
+    });
+
     testWidgets('shows the channel selector on stable', (tester) async {
       await tester.pumpWidget(buildAboutWidget(await aboutOverrides()));
       await tester.pumpAndSettle();
@@ -1193,6 +1248,28 @@ void main() {
 
       expect(find.textContaining('(Beta)'), findsOneWidget);
     });
+
+    testWidgets(
+      'bathymetry credit lists swissBATHY3D alongside GMRT, EMODnet and ETOPO',
+      (tester) async {
+        await tester.pumpWidget(buildAboutWidget(await aboutOverrides()));
+        await tester.pumpAndSettle();
+        await tester.pump(const Duration(seconds: 6));
+
+        await tester.scrollUntilVisible(
+          find.textContaining('swissBATHY3D'),
+          100,
+        );
+        final creditFinder = find.textContaining('swissBATHY3D');
+        expect(creditFinder, findsOneWidget);
+        final creditText = tester.widget<Text>(creditFinder).data!;
+        expect(creditText, contains('GMRT'));
+        expect(creditText, contains('EMODnet'));
+        expect(creditText, contains('ETOPO'));
+        expect(creditText, contains('swissBATHY3D'));
+        expect(creditText, contains('swisstopo'));
+      },
+    );
   });
 
   group('AppearanceSectionContent navigation', () {
@@ -1455,6 +1532,220 @@ void main() {
     });
   });
 
+  group('AppearanceSectionContent swissBATHY3D manual reload', () {
+    Widget buildAppearanceWidget(List<Override> overrides) {
+      final router = GoRouter(
+        initialLocation: '/settings?selected=appearance',
+        routes: [
+          GoRoute(
+            path: '/settings',
+            builder: (context, state) => const SettingsPage(),
+          ),
+          GoRoute(
+            path: '/settings/themes',
+            builder: (context, state) => const Text('Themes'),
+          ),
+        ],
+      );
+
+      return ProviderScope(
+        overrides: overrides,
+        child: MaterialApp.router(
+          locale: const Locale('en'),
+          routerConfig: router,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+        ),
+      );
+    }
+
+    testWidgets('reload tile calls the refresh action and shows a spinner '
+        'while pending', (tester) async {
+      var calls = 0;
+      final completer = Completer<SwissBathyRefreshSummary?>();
+      final overrides = [
+        ...getOverrides(),
+        swissBathyManualRefreshProvider.overrideWithValue(() {
+          calls++;
+          return completer.future;
+        }),
+      ];
+
+      await tester.pumpWidget(buildAppearanceWidget(overrides));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Reload Map Data'), findsOneWidget);
+      await tester.tap(find.text('Reload Map Data'));
+      await tester.pump();
+
+      expect(calls, 1);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+      completer.complete(
+        const SwissBathyRefreshSummary(updated: 0, upToDate: 3, failed: 0),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('All data is up to date'), findsOneWidget);
+    });
+
+    testWidgets('shows how many tiles were updated on success', (tester) async {
+      final overrides = [
+        ...getOverrides(),
+        swissBathyManualRefreshProvider.overrideWithValue(
+          () async => const SwissBathyRefreshSummary(
+            updated: 2,
+            upToDate: 1,
+            failed: 0,
+          ),
+        ),
+      ];
+
+      await tester.pumpWidget(buildAppearanceWidget(overrides));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Reload Map Data'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('2 tiles updated'), findsOneWidget);
+    });
+
+    testWidgets(
+      'a failed check leaves cached values in place and shows a non-alarming '
+      'message instead of an error',
+      (tester) async {
+        final overrides = [
+          ...getOverrides(),
+          swissBathyManualRefreshProvider.overrideWithValue(
+            () async => const SwissBathyRefreshSummary(
+              updated: 0,
+              upToDate: 0,
+              failed: 2,
+            ),
+          ),
+        ];
+
+        await tester.pumpWidget(buildAppearanceWidget(overrides));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Reload Map Data'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text("Couldn't check all data; existing values were kept"),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
+      'reports a failure, not up-to-date, when the refresh could not run '
+      'at all (null summary)',
+      (tester) async {
+        final overrides = [
+          ...getOverrides(),
+          swissBathyManualRefreshProvider.overrideWithValue(() async => null),
+        ];
+
+        await tester.pumpWidget(buildAppearanceWidget(overrides));
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('Reload Map Data'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text("Couldn't check all data; existing values were kept"),
+          findsOneWidget,
+        );
+        expect(find.text('All data is up to date'), findsNothing);
+      },
+    );
+  });
+
+  group('AppearanceSectionContent swissBATHY3D manual reload on the '
+      'desktop master-detail layout', () {
+    // Every prior test for this tile pumped it at the default 800x600 test
+    // surface, which is below ResponsiveBreakpoints.masterDetail (1100px).
+    // SettingsPage.build() only takes the split-view MasterDetailScaffold
+    // branch at >=1100px; below that (including exactly 800px) it falls
+    // back to the mobile ?selected= deep-link path, which happens to render
+    // the same _AppearanceSectionContent widget but through a different
+    // parent (SettingsSectionDetailPage instead of MasterDetailScaffold's
+    // split Row). This test pumps the real '/settings' route at a genuine
+    // desktop width with the master list and detail pane both mounted at
+    // once, taps "Appearance" in the master list exactly like a user would,
+    // and checks the reload tile actually appears in the live detail pane.
+    Widget buildWideSettingsWidget(List<Override> overrides) {
+      final router = GoRouter(
+        initialLocation: '/settings',
+        routes: [
+          GoRoute(
+            path: '/settings',
+            builder: (context, state) => const SettingsPage(),
+          ),
+          GoRoute(
+            path: '/settings/themes',
+            builder: (context, state) => const Text('Themes'),
+          ),
+        ],
+      );
+
+      return ProviderScope(
+        overrides: overrides,
+        child: MaterialApp.router(
+          locale: const Locale('en'),
+          routerConfig: router,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+        ),
+      );
+    }
+
+    testWidgets(
+      'tapping Appearance in the master list reveals the reload tile in '
+      'the detail pane',
+      (tester) async {
+        tester.view.devicePixelRatio = 1.0;
+        tester.view.physicalSize = const Size(1400, 900);
+        addTearDown(() {
+          tester.view.resetPhysicalSize();
+          tester.view.resetDevicePixelRatio();
+        });
+
+        final overrides = [
+          ...getOverrides(),
+          swissBathyManualRefreshProvider.overrideWithValue(
+            () async => const SwissBathyRefreshSummary(
+              updated: 0,
+              upToDate: 0,
+              failed: 0,
+            ),
+          ),
+        ];
+
+        await tester.pumpWidget(buildWideSettingsWidget(overrides));
+        await tester.pumpAndSettle();
+
+        // Master list is showing; the detail pane starts on the summary.
+        expect(find.text('Appearance'), findsOneWidget);
+        expect(find.text('Reload Map Data'), findsNothing);
+
+        await tester.tap(find.text('Appearance'));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('Reload Map Data'),
+          findsOneWidget,
+          reason:
+              'the split-view detail pane must render the same reload tile '
+              'the mobile ?selected= path shows',
+        );
+      },
+    );
+  });
+
   group('ManageSectionContent checklist templates tile', () {
     /// Build a widget that renders the SettingsPage via GoRouter with
     /// ?selected=manage, which renders the _SettingsSectionDetailPage
@@ -1470,11 +1761,16 @@ void main() {
           ),
           GoRoute(
             path: '/checklist-templates',
-            builder: (context, state) => const Text('Checklist Templates Stub'),
+            builder: (context, state) =>
+                const Text('Trip Checklist Templates Stub'),
           ),
           GoRoute(
             path: '/equipment/service-types',
             builder: (context, state) => const Text('Service Types Stub'),
+          ),
+          GoRoute(
+            path: '/site-types',
+            builder: (context, state) => const Text('Site Types Stub'),
           ),
           GoRoute(
             path: '/settings/trimix-mixer',
@@ -1500,16 +1796,17 @@ void main() {
       await tester.pumpWidget(buildManageWidget(getOverrides()));
       await tester.pumpAndSettle();
 
-      expect(find.text('Checklist Templates'), findsOneWidget);
+      expect(find.text('Trip Checklist Templates'), findsOneWidget);
       expect(
         find.text('Reusable to-do lists for trip planning'),
         findsOneWidget,
       );
 
-      await tester.tap(find.text('Checklist Templates'));
+      await tester.ensureVisible(find.text('Trip Checklist Templates'));
+      await tester.tap(find.text('Trip Checklist Templates'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Checklist Templates Stub'), findsOneWidget);
+      expect(find.text('Trip Checklist Templates Stub'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -1527,10 +1824,28 @@ void main() {
         findsOneWidget,
       );
 
+      await tester.ensureVisible(find.text('Service types'));
       await tester.tap(find.text('Service types'));
       await tester.pumpAndSettle();
 
       expect(find.text('Service Types Stub'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('renders the site types tile and navigates on tap', (
+      tester,
+    ) async {
+      await tester.pumpWidget(buildManageWidget(getOverrides()));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Site Types'), findsOneWidget);
+      expect(find.text('Built-in and custom dive site types'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Site Types'));
+      await tester.tap(find.text('Site Types'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Site Types Stub'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
