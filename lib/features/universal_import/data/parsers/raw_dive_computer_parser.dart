@@ -12,6 +12,7 @@ import 'package:submersion/features/universal_import/data/models/import_options.
 import 'package:submersion/features/universal_import/data/models/import_payload.dart';
 import 'package:submersion/features/universal_import/data/models/import_warning.dart';
 import 'package:submersion/features/universal_import/data/parsers/import_parser.dart';
+import 'package:submersion/features/universal_import/data/services/import_site_location.dart';
 
 /// Parses a raw Suunto "Vaasa" generation (Nautic / Ocean) dive-log file —
 /// the `SBEM0103` records a Bluetooth download stores — inside the universal
@@ -220,10 +221,13 @@ class RawDiveComputerParser implements ImportParser {
     return out;
   }
 
+  /// The dive's own entry or exit fix, judged by the shared import contract
+  /// (#2232) so it agrees with every other importer. The native layer's
+  /// (-1, -1) "no fix" sentinel is rejected first: it is a valid pair to the
+  /// contract but never a position.
   (double, double)? _validFix(double? lat, double? lon) {
-    if (lat == null || lon == null) return null;
-    if (lat == 0.0 && lon == 0.0) return null;
     if (lat == -1.0 && lon == -1.0) return null;
-    return (lat, lon);
+    final point = ImportSiteLocation.fix(lat, lon);
+    return point == null ? null : (point.latitude, point.longitude);
   }
 }
