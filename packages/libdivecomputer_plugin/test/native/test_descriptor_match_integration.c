@@ -341,6 +341,28 @@ static void test_seac_cable_only_models_stay_off_ble(void) {
     printf("PASS: test_seac_cable_only_models_stay_off_ble\n");
 }
 
+// libdivecomputer#73: the Suunto Nautic (Vaasa generation) advertises
+// "Suunto Nautic <serial>" -- confirmed from a BLE HCI capture of a real unit
+// ("Suunto Nautic 2604C3003306"). dc_filter_suunto_nautic prefix-matches
+// "Suunto Nautic" and "Suunto Ocean", so both the bare model word and a
+// serial-suffixed name must resolve to the Nautic row (model 0).
+static void test_suunto_nautic_resolves(void) {
+    expect_ble_match("Suunto Nautic", "Nautic", 0);
+    expect_ble_match("Suunto Nautic 2604C3003306", "Nautic", 0);
+    expect_ble_match("SUUNTO NAUTIC 2604C3003306", "Nautic", 0);
+    printf("PASS: test_suunto_nautic_resolves\n");
+}
+
+// dc_filter_suunto_nautic prefix-matches "Suunto Nautic"/"Suunto Ocean", so a
+// bare "Suunto" advertisement, or the "S19 <hex> LE" name the next-generation
+// Suunto Ocean smartwatch actually broadcasts (issue #123), must not be
+// claimed by the Nautic row.
+static void test_suunto_nautic_does_not_overreach(void) {
+    expect_no_ble_match("Suunto");
+    expect_no_ble_match("S19 1DFC LE");
+    printf("PASS: test_suunto_nautic_does_not_overreach\n");
+}
+
 int main(void) {
     test_hud_resolves_to_g2_hud();
     test_other_short_aliases_resolve();
@@ -364,6 +386,8 @@ int main(void) {
     test_seac_tablet_padded_names_resolve();
     test_seac_vendor_word_spellings_resolve();
     test_seac_cable_only_models_stay_off_ble();
+    test_suunto_nautic_resolves();
+    test_suunto_nautic_does_not_overreach();
     printf("\nAll descriptor match integration tests passed.\n");
     return 0;
 }

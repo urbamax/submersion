@@ -1163,7 +1163,8 @@ ParsedDive::ParsedDive(
   const double* entry_latitude,
   const double* entry_longitude,
   const double* exit_latitude,
-  const double* exit_longitude)
+  const double* exit_longitude,
+  const double* pp_o2_max_bar)
  : fingerprint_(fingerprint),
     date_time_year_(date_time_year),
     date_time_month_(date_time_month),
@@ -1191,7 +1192,8 @@ ParsedDive::ParsedDive(
     entry_latitude_(entry_latitude ? std::optional<double>(*entry_latitude) : std::nullopt),
     entry_longitude_(entry_longitude ? std::optional<double>(*entry_longitude) : std::nullopt),
     exit_latitude_(exit_latitude ? std::optional<double>(*exit_latitude) : std::nullopt),
-    exit_longitude_(exit_longitude ? std::optional<double>(*exit_longitude) : std::nullopt) {}
+    exit_longitude_(exit_longitude ? std::optional<double>(*exit_longitude) : std::nullopt),
+    pp_o2_max_bar_(pp_o2_max_bar ? std::optional<double>(*pp_o2_max_bar) : std::nullopt) {}
 
 const std::string& ParsedDive::fingerprint() const {
   return fingerprint_;
@@ -1501,9 +1503,22 @@ void ParsedDive::set_exit_longitude(double value_arg) {
 }
 
 
+const double* ParsedDive::pp_o2_max_bar() const {
+  return pp_o2_max_bar_ ? &(*pp_o2_max_bar_) : nullptr;
+}
+
+void ParsedDive::set_pp_o2_max_bar(const double* value_arg) {
+  pp_o2_max_bar_ = value_arg ? std::optional<double>(*value_arg) : std::nullopt;
+}
+
+void ParsedDive::set_pp_o2_max_bar(double value_arg) {
+  pp_o2_max_bar_ = value_arg;
+}
+
+
 EncodableList ParsedDive::ToEncodableList() const {
   EncodableList list;
-  list.reserve(28);
+  list.reserve(29);
   list.push_back(EncodableValue(fingerprint_));
   list.push_back(EncodableValue(date_time_year_));
   list.push_back(EncodableValue(date_time_month_));
@@ -1532,6 +1547,7 @@ EncodableList ParsedDive::ToEncodableList() const {
   list.push_back(entry_longitude_ ? EncodableValue(*entry_longitude_) : EncodableValue());
   list.push_back(exit_latitude_ ? EncodableValue(*exit_latitude_) : EncodableValue());
   list.push_back(exit_longitude_ ? EncodableValue(*exit_longitude_) : EncodableValue());
+  list.push_back(pp_o2_max_bar_ ? EncodableValue(*pp_o2_max_bar_) : EncodableValue());
   return list;
 }
 
@@ -1606,6 +1622,10 @@ ParsedDive ParsedDive::FromEncodableList(const EncodableList& list) {
   auto& encodable_exit_longitude = list[27];
   if (!encodable_exit_longitude.IsNull()) {
     decoded.set_exit_longitude(std::get<double>(encodable_exit_longitude));
+  }
+  auto& encodable_pp_o2_max_bar = list[28];
+  if (!encodable_pp_o2_max_bar.IsNull()) {
+    decoded.set_pp_o2_max_bar(std::get<double>(encodable_pp_o2_max_bar));
   }
   return decoded;
 }

@@ -447,6 +447,14 @@ static void fill_missing_depths(sample_state_t *state) {
                 double fraction = t1 > t0
                     ? (double)(dive->samples[j].time_ms - t0) / (double)(t1 - t0)
                     : 0.0;
+                // A sample whose time_ms falls outside [t0, t1] -- an
+                // out-of-order timestamp such as a Suunto Nautic GPS-chunk
+                // clock excursion (submersion-libdc#1) -- makes the unsigned
+                // subtraction above wrap to a huge value. An interpolated
+                // depth can never legitimately sit outside its two real
+                // bracketing readings, so clamp regardless of the cause.
+                if (fraction < 0.0) fraction = 0.0;
+                if (fraction > 1.0) fraction = 1.0;
                 dive->samples[j].depth = d0 + (d1 - d0) * fraction;
             }
         }
@@ -572,6 +580,11 @@ static int extract_dive_fields(dc_parser_t *parser, libdc_parsed_dive_t *dive) {
         dive->gf_high = decomodel.params.gf.high;
     }
 
+    // Extract the diver's configured working ppO2 ceiling (Suunto Nautic).
+    if (dc_parser_get_field(parser, DC_FIELD_PPO2_MAX, 0, &dval) == DC_STATUS_SUCCESS) {
+        dive->ppo2_max = dval;
+    }
+
     // Extract GPS entry/exit fixes (Shearwater Swift). flags: 0=entry, 1=exit.
     // Patched libdivecomputer maps these to opening[9]/closing[9] record 9.
     // Families that report GPS per-sample instead are handled in
@@ -659,6 +672,7 @@ static int parse_dive(download_state_t *state,
     dive->deco_conservatism = 0;
     dive->gf_low = 0;
     dive->gf_high = 0;
+    dive->ppo2_max = NAN;
     dive->events = NULL;
     dive->event_count = 0;
     dive->event_capacity = 0;
@@ -683,6 +697,33 @@ static int parse_dive(download_state_t *state,
     }
 
     int result = extract_dive_fields(parser, dive);
+
+    // Suunto Nautic/Ocean: a dive with no surface GPS fix has no absolute
+    // clock in its own stream, so dc_parser_get_datetime returns
+    // DC_STATUS_UNSUPPORTED and extract_dive_fields leaves dive->year at its
+    // memset 0 -- which downstream (DateTime.utc(0, 0, 0, ...)) normalizes
+    // to a nonsense date, not an error a caller can catch. The driver's own
+    // suunto_nautic_parser_get_datetime documents the intended recovery:
+    // "the caller falls back to the logbook id (which is that same
+    // timestamp)". The logbook id is exactly this dive's fingerprint, a
+    // 4-byte little-endian Unix timestamp.
+    if (dive->year == 0 && fingerprint != NULL && fsize == 4 &&
+        dc_parser_get_type(parser) == DC_FAMILY_SUUNTO_NAUTIC) {
+        uint32_t epoch = (uint32_t)fingerprint[0] |
+                          ((uint32_t)fingerprint[1] << 8) |
+                          ((uint32_t)fingerprint[2] << 16) |
+                          ((uint32_t)fingerprint[3] << 24);
+        dc_datetime_t dt = {0};
+        if (dc_datetime_gmtime(&dt, (dc_ticks_t)epoch)) {
+            dive->year = dt.year;
+            dive->month = dt.month;
+            dive->day = dt.day;
+            dive->hour = dt.hour;
+            dive->minute = dt.minute;
+            dive->second = dt.second;
+            dive->timezone = dt.timezone;
+        }
+    }
 
     dc_parser_destroy(parser);
     return result;

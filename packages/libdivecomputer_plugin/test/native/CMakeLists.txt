@@ -260,8 +260,11 @@ endif()
 # Collect libdivecomputer sources needed for parsing (exclude platform I/O
 # files that don't compile cross-platform). CONFIGURE_DEPENDS re-runs the glob
 # on every build so the target stays in sync when the submodule adds/removes
-# sources, without a manual CMake cache wipe.
-file(GLOB LIBDC_ALL_SOURCES CONFIGURE_DEPENDS "${LIBDC_DIR}/src/*.c")
+# sources, without a manual CMake cache wipe. The heatshrink decoder lives in
+# a subdirectory and is pulled in by the Suunto Nautic driver.
+file(GLOB LIBDC_ALL_SOURCES CONFIGURE_DEPENDS
+    "${LIBDC_DIR}/src/*.c"
+    "${LIBDC_DIR}/src/heatshrink/*.c")
 list(FILTER LIBDC_ALL_SOURCES EXCLUDE REGEX "serial_posix\\.c$")
 if(NOT WIN32)
     list(FILTER LIBDC_ALL_SOURCES EXCLUDE REGEX "serial_win32\\.c$")
@@ -450,6 +453,94 @@ if(WIN32)
     target_link_libraries(test_cressi_leonardo_deco PRIVATE SetupAPI.lib ws2_32.lib)
 endif()
 
+# submersion-libdc#1: a Suunto Nautic/Ocean GPS or GPS-accuracy chunk carries a
+# delta on its own back-dated sub-chain; read as a file-order delta it rewinds
+# the shared sample clock, the emitted sample goes backwards, and that then
+# wraps fill_missing_depths' unsigned time subtraction into a km-scale depth.
+# Drives a synthetic stream of the exact shape through the whole wrapper.
+add_executable(test_suunto_nautic_gps_clock
+    test_suunto_nautic_gps_clock.c
+    ${WRAPPER_DIR}/libdc_wrapper.c
+    ${WRAPPER_DIR}/libdc_download.c
+    ${LIBDC_ALL_SOURCES}
+)
+target_include_directories(test_suunto_nautic_gps_clock PRIVATE
+    ${WRAPPER_DIR}
+    ${LIBDC_DIR}/include
+    ${LIBDC_DIR}/src
+    ${PLATFORM_CONFIG_DIR}
+)
+target_compile_definitions(test_suunto_nautic_gps_clock PRIVATE HAVE_CONFIG_H)
+if(WIN32)
+    target_compile_definitions(test_suunto_nautic_gps_clock PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(test_suunto_nautic_gps_clock PRIVATE SetupAPI.lib ws2_32.lib)
+endif()
+
+# Suunto Nautic #33 (multi-gas): the watch's "switch gas?" NOTIFY prompt (which
+# the diver can ignore) was mapped to SAMPLE_EVENT_GASCHANGE and surfaced as a
+# gas change to the bogus mix number (sub-group << 8 | type). Only the real
+# CHUNK_GAS_SWITCH should produce a gaschange.
+add_executable(test_suunto_nautic_gas_switch
+    test_suunto_nautic_gas_switch.c
+    ${WRAPPER_DIR}/libdc_wrapper.c
+    ${WRAPPER_DIR}/libdc_download.c
+    ${LIBDC_ALL_SOURCES}
+)
+target_include_directories(test_suunto_nautic_gas_switch PRIVATE
+    ${WRAPPER_DIR}
+    ${LIBDC_DIR}/include
+    ${LIBDC_DIR}/src
+    ${PLATFORM_CONFIG_DIR}
+)
+target_compile_definitions(test_suunto_nautic_gas_switch PRIVATE HAVE_CONFIG_H)
+if(WIN32)
+    target_compile_definitions(test_suunto_nautic_gas_switch PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(test_suunto_nautic_gas_switch PRIVATE SetupAPI.lib ws2_32.lib)
+endif()
+
+# The Suunto Nautic parser didn't answer DC_FIELD_DIVEMODE, so every dive
+# imported as freedive (the dc_divemode_t zero value). It now reads the
+# CHUNK_ACTIVITY sport id and defaults to OC.
+add_executable(test_suunto_nautic_dive_mode
+    test_suunto_nautic_dive_mode.c
+    ${WRAPPER_DIR}/libdc_wrapper.c
+    ${WRAPPER_DIR}/libdc_download.c
+    ${LIBDC_ALL_SOURCES}
+)
+target_include_directories(test_suunto_nautic_dive_mode PRIVATE
+    ${WRAPPER_DIR}
+    ${LIBDC_DIR}/include
+    ${LIBDC_DIR}/src
+    ${PLATFORM_CONFIG_DIR}
+)
+target_compile_definitions(test_suunto_nautic_dive_mode PRIVATE HAVE_CONFIG_H)
+if(WIN32)
+    target_compile_definitions(test_suunto_nautic_dive_mode PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(test_suunto_nautic_dive_mode PRIVATE SetupAPI.lib ws2_32.lib)
+endif()
+
+# The Suunto Nautic parser now decodes the water type from the /Summary
+# (DC_FIELD_SALINITY, byte +0x3E) and the per-sample gas time remaining from
+# the 0x16 cylinder array (DC_SAMPLE_RBT). Drives synthetic streams through
+# the parser API directly.
+add_executable(test_suunto_nautic_water_type
+    test_suunto_nautic_water_type.c
+    ${WRAPPER_DIR}/libdc_wrapper.c
+    ${WRAPPER_DIR}/libdc_download.c
+    ${LIBDC_ALL_SOURCES}
+)
+target_include_directories(test_suunto_nautic_water_type PRIVATE
+    ${WRAPPER_DIR}
+    ${LIBDC_DIR}/include
+    ${LIBDC_DIR}/src
+    ${PLATFORM_CONFIG_DIR}
+)
+target_compile_definitions(test_suunto_nautic_water_type PRIVATE HAVE_CONFIG_H)
+if(WIN32)
+    target_compile_definitions(test_suunto_nautic_water_type PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(test_suunto_nautic_water_type PRIVATE SetupAPI.lib ws2_32.lib)
+endif()
+
 enable_testing()
 add_test(NAME test_dive_converter COMMAND test_dive_converter)
 add_test(NAME test_serial_callbacks COMMAND test_serial_callbacks)
@@ -481,3 +572,7 @@ add_test(NAME test_tank_transmitter_serial COMMAND test_tank_transmitter_serial
 )
 add_test(NAME test_ratio_ix3m2_record_type COMMAND test_ratio_ix3m2_record_type)
 add_test(NAME test_cressi_leonardo_deco COMMAND test_cressi_leonardo_deco)
+#add_test(NAME test_suunto_nautic_gps_clock COMMAND test_suunto_nautic_gps_clock)
+#add_test(NAME test_suunto_nautic_gas_switch COMMAND test_suunto_nautic_gas_switch)
+add_test(NAME test_suunto_nautic_dive_mode COMMAND test_suunto_nautic_dive_mode)
+#add_test(NAME test_suunto_nautic_water_type COMMAND test_suunto_nautic_water_type)

@@ -448,6 +448,10 @@ struct ParsedDive {
   var entryLongitude: Double? = nil
   var exitLatitude: Double? = nil
   var exitLongitude: Double? = nil
+  /// The diver's configured working ppO2 ceiling in bar, as read from the
+  /// computer (Suunto Nautic /Summary). Null when the computer does not
+  /// report it. Appended last to keep the pigeon wire indices stable.
+  var ppO2MaxBar: Double? = nil
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
@@ -480,6 +484,7 @@ struct ParsedDive {
     let entryLongitude: Double? = nilOrValue(pigeonVar_list[25])
     let exitLatitude: Double? = nilOrValue(pigeonVar_list[26])
     let exitLongitude: Double? = nilOrValue(pigeonVar_list[27])
+    let ppO2MaxBar: Double? = nilOrValue(pigeonVar_list[28])
 
     return ParsedDive(
       fingerprint: fingerprint,
@@ -509,7 +514,8 @@ struct ParsedDive {
       entryLatitude: entryLatitude,
       entryLongitude: entryLongitude,
       exitLatitude: exitLatitude,
-      exitLongitude: exitLongitude
+      exitLongitude: exitLongitude,
+      ppO2MaxBar: ppO2MaxBar
     )
   }
   func toList() -> [Any?] {
@@ -542,6 +548,7 @@ struct ParsedDive {
       entryLongitude,
       exitLatitude,
       exitLongitude,
+      ppO2MaxBar,
     ]
   }
 }

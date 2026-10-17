@@ -581,7 +581,8 @@ class ParsedDive {
     const double* entry_latitude,
     const double* entry_longitude,
     const double* exit_latitude,
-    const double* exit_longitude);
+    const double* exit_longitude,
+    const double* pp_o2_max_bar);
 
   const std::string& fingerprint() const;
   void set_fingerprint(std::string_view value_arg);
@@ -681,6 +682,13 @@ class ParsedDive {
   void set_exit_longitude(const double* value_arg);
   void set_exit_longitude(double value_arg);
 
+  // The diver's configured working ppO2 ceiling in bar, as read from the
+  // computer (Suunto Nautic /Summary). Null when the computer does not
+  // report it. Appended last to keep the pigeon wire indices stable.
+  const double* pp_o2_max_bar() const;
+  void set_pp_o2_max_bar(const double* value_arg);
+  void set_pp_o2_max_bar(double value_arg);
+
 
  private:
   static ParsedDive FromEncodableList(const flutter::EncodableList& list);
@@ -716,6 +724,7 @@ class ParsedDive {
   std::optional<double> entry_longitude_;
   std::optional<double> exit_latitude_;
   std::optional<double> exit_longitude_;
+  std::optional<double> pp_o2_max_bar_;
 
 };
 
