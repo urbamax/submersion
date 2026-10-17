@@ -432,6 +432,10 @@ final Map<String, ConflictField> diveLogFields = {
     FieldKind.enumValue,
     enumLabel: precipitationLabeler,
   ),
+  'ppO2Working': ConflictField(
+    (l) => l.gasCalculators_ppO2Limit,
+    FieldKind.number,
+  ),
   'presetName': ConflictField(
     (l) => l.settings_conflict_field_presetName,
     FieldKind.shortText,
