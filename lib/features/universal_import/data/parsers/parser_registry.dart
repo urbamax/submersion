@@ -8,6 +8,7 @@ import 'package:submersion/features/universal_import/data/parsers/macdive_sqlite
 import 'package:submersion/features/universal_import/data/parsers/macdive_xml_parser.dart';
 import 'package:submersion/features/universal_import/data/parsers/placeholder_parser.dart';
 import 'package:submersion/features/universal_import/data/parsers/ratio_xml_parser.dart';
+import 'package:submersion/features/universal_import/data/parsers/raw_dive_computer_parser.dart';
 import 'package:submersion/features/universal_import/data/parsers/shearwater_cloud_parser.dart';
 import 'package:submersion/features/universal_import/data/parsers/submersion_csv/submersion_dives_csv_parser.dart';
 import 'package:submersion/features/universal_import/data/parsers/submersion_csv/submersion_equipment_csv_parser.dart';
@@ -35,6 +36,7 @@ ImportParser parserForFormat(ImportFormat format) {
     ImportFormat.submersionSitesCsv => const SubmersionSitesCsvParser(),
     ImportFormat.submersionEquipmentCsv => const SubmersionEquipmentCsvParser(),
     ImportFormat.submersionFillsCsv => const SubmersionFillsCsvParser(),
+    ImportFormat.suuntoNauticRaw => const RawDiveComputerParser(),
     _ => const PlaceholderParser(),
   };
 }

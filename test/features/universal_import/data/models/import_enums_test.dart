@@ -4,7 +4,7 @@ import 'package:submersion/features/universal_import/data/models/import_enums.da
 void main() {
   group('ImportFormat', () {
     test('has all expected values', () {
-      expect(ImportFormat.values, hasLength(23));
+      expect(ImportFormat.values, hasLength(24));
     });
 
     test('displayName for each format', () {
@@ -41,6 +41,7 @@ void main() {
       expect(ImportFormat.ratioXml.displayName, 'Ratio XML');
       expect(ImportFormat.sqlite.displayName, 'SQLite Database');
       expect(ImportFormat.navTrack.displayName, 'Seacraft ENC log');
+      expect(ImportFormat.suuntoNauticRaw.displayName, 'Suunto Nautic / Ocean');
       expect(ImportFormat.unknown.displayName, 'Unknown');
     });
 
@@ -81,6 +82,7 @@ void main() {
         expect(ImportFormat.submersionSitesCsv.isSupported, isTrue);
         expect(ImportFormat.submersionEquipmentCsv.isSupported, isTrue);
         expect(ImportFormat.submersionFillsCsv.isSupported, isTrue);
+        expect(ImportFormat.suuntoNauticRaw.isSupported, isTrue);
       },
     );
 

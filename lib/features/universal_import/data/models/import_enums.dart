@@ -39,6 +39,11 @@ enum ImportFormat {
   /// the way the Suunto Cloud import does (so its DiveRoute arrives too,
   /// issue #1445), not the universal parser registry.
   suuntoJson,
+
+  /// A raw Suunto "Vaasa" generation (Nautic / Ocean) dive-log file. The
+  /// universal pipeline can't parse it; detecting it lets the wizard hand
+  /// off to the dive-computer file import instead of dead-ending.
+  suuntoNauticRaw,
   unknown;
 
   String get displayName => switch (this) {
@@ -64,6 +69,7 @@ enum ImportFormat {
     sqlite => 'SQLite Database',
     navTrack => 'Seacraft ENC log',
     suuntoJson => 'Suunto JSON',
+    suuntoNauticRaw => 'Suunto Nautic / Ocean',
     unknown => 'Unknown',
   };
 
@@ -95,7 +101,8 @@ enum ImportFormat {
     divingLogSqlite ||
     diveMateDdb ||
     danDl7 ||
-    ratioXml => true,
+    ratioXml ||
+    suuntoNauticRaw => true,
     _ => false,
   };
 }

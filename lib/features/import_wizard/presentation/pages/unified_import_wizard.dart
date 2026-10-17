@@ -389,6 +389,7 @@ class _UnifiedImportWizardBodyState
     // resolution) may have created a new record even when all dives were
     // skipped.
     if (widget.adapter.sourceType == ImportSourceType.diveComputer ||
+        widget.adapter.sourceType == ImportSourceType.universal ||
         widget.adapter.sourceType == ImportSourceType.suuntoCloud ||
         widget.adapter.sourceType == ImportSourceType.suuntoFile ||
         widget.adapter.sourceType == ImportSourceType.garminCloud) {
