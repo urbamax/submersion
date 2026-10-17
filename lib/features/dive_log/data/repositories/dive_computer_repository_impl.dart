@@ -898,6 +898,7 @@ class DiveComputerRepository {
     required String? decoAlgorithm,
     required int? gfLow,
     required int? gfHigh,
+    required double? ppO2Working,
     required Uint8List? rawData,
     required Uint8List? rawFingerprint,
     required String? descriptorVendor,
@@ -933,6 +934,7 @@ class DiveComputerRepository {
       decoAlgorithm: Value(decoAlgorithm),
       gradientFactorLow: Value(gfLow),
       gradientFactorHigh: Value(gfHigh),
+      ppO2Working: Value(ppO2Working),
       rawData: Value(rawData),
       rawFingerprint: Value(rawFingerprint),
       descriptorVendor: Value(descriptorVendor),
@@ -1454,6 +1456,7 @@ class DiveComputerRepository {
     // Tissue state the computer reported for the dive as a whole; stored
     // verbatim. Null on an update leaves any stored snapshot in place.
     ComputerTissueSnapshot? computerTissue,
+    double? ppO2Working,
     List<EventData>? events,
     List<GasSwitchData>? gasSwitches,
     int? diveNumber,
@@ -1599,6 +1602,7 @@ class DiveComputerRepository {
                 decoAlgorithm: Value(decoAlgorithm),
                 decoConservatism: Value(decoConservatism),
                 computerTissueJson: Value(computerTissue?.encode()),
+                ppO2Working: Value(ppO2Working),
                 diveMode: Value(diveMode.code),
                 // Only set when the caller resolved a Diluent cylinder,
                 // never a fabricated default -- an OC dive or a CCR dive
@@ -1732,6 +1736,7 @@ class DiveComputerRepository {
                 descriptorProduct: descriptorProduct,
                 descriptorModel: descriptorModel,
                 libdivecomputerVersion: libdivecomputerVersion,
+                ppO2Working: ppO2Working,
               ),
             );
 
@@ -1832,6 +1837,7 @@ class DiveComputerRepository {
                 decoAlgorithm: decoAlgorithm,
                 gfLow: gfLow,
                 gfHigh: gfHigh,
+                ppO2Working: ppO2Working,
                 rawData: rawData,
                 rawFingerprint: rawFingerprint,
                 descriptorVendor: descriptorVendor,
@@ -2205,6 +2211,9 @@ class DiveComputerRepository {
             computerTissueJson: computerTissue == null
                 ? const Value.absent()
                 : Value(computerTissue.encode()),
+            ppO2Working: ppO2Working == null
+                ? const Value.absent()
+                : Value(ppO2Working),
           ),
         );
         await _syncRepository.markRecordPending(

@@ -400,5 +400,12 @@ extension RungsFromV231 on AppDatabase {
       await _assertSegmentSplitAtRateColumn();
     }
     if (from < 290) await reportProgress();
+    // v291: dives.pp_o2_working and dive_data_sources.pp_o2_working. Columns
+    // only, no backfill: nothing recorded the ceiling for an older dive.
+    // Re-asserted in beforeOpen.
+    if (from < 291) {
+      await _assertPpO2WorkingColumns();
+    }
+    if (from < 291) await reportProgress();
   }
 }

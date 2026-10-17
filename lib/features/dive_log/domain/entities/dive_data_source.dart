@@ -35,6 +35,7 @@ class DiveDataSource extends Equatable {
   final String? decoAlgorithm;
   final int? gradientFactorLow;
   final int? gradientFactorHigh;
+  final double? ppO2Working;
   final DateTime importedAt;
   final DateTime createdAt;
 
@@ -68,6 +69,7 @@ class DiveDataSource extends Equatable {
     this.decoAlgorithm,
     this.gradientFactorLow,
     this.gradientFactorHigh,
+    this.ppO2Working,
     required this.importedAt,
     required this.createdAt,
   });
@@ -102,6 +104,7 @@ class DiveDataSource extends Equatable {
     String? decoAlgorithm,
     int? gradientFactorLow,
     int? gradientFactorHigh,
+    double? ppO2Working,
     DateTime? importedAt,
     DateTime? createdAt,
   }) {
@@ -135,6 +138,7 @@ class DiveDataSource extends Equatable {
       decoAlgorithm: decoAlgorithm ?? this.decoAlgorithm,
       gradientFactorLow: gradientFactorLow ?? this.gradientFactorLow,
       gradientFactorHigh: gradientFactorHigh ?? this.gradientFactorHigh,
+      ppO2Working: ppO2Working ?? this.ppO2Working,
       importedAt: importedAt ?? this.importedAt,
       createdAt: createdAt ?? this.createdAt,
     );
@@ -171,6 +175,7 @@ class DiveDataSource extends Equatable {
     decoAlgorithm,
     gradientFactorLow,
     gradientFactorHigh,
+    ppO2Working,
     importedAt,
     createdAt,
   ];

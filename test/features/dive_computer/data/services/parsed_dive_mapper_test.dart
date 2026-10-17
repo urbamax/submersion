@@ -32,6 +32,7 @@ void main() {
       double? entryLongitude,
       double? exitLatitude,
       double? exitLongitude,
+      double? ppO2MaxBar,
     }) {
       return pigeon.ParsedDive(
         fingerprint: fingerprint,
@@ -60,6 +61,7 @@ void main() {
         entryLongitude: entryLongitude,
         exitLatitude: exitLatitude,
         exitLongitude: exitLongitude,
+        ppO2MaxBar: ppO2MaxBar,
       );
     }
 
@@ -285,6 +287,24 @@ void main() {
 
       expect(downloaded.profile[2].heartRate, 85);
     });
+
+    test(
+      'maps the computer\'s configured ppO2 ceiling (absent stays null)',
+      () {
+        expect(
+          parsedDiveToDownloaded(
+            makeParsedDive(fingerprint: 'po2max', ppO2MaxBar: 1.6),
+          ).ppO2Working,
+          1.6,
+        );
+        expect(
+          parsedDiveToDownloaded(
+            makeParsedDive(fingerprint: 'nopo2'),
+          ).ppO2Working,
+          isNull,
+        );
+      },
+    );
 
     test('maps per-cell O2 sensor ppO2 (absent cells stay null)', () {
       final parsed = makeParsedDive(

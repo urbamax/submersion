@@ -163,6 +163,7 @@ const Map<String, String> consolidationUnfilledColumns = {
   'gradient_factor_high': 'how the target computer computed its deco',
   'deco_algorithm': 'how the target computer computed its deco',
   'deco_conservatism': 'how the target computer computed its deco',
+  'pp_o2_working': "the target computer's own configured ppO2 limit",
   'computer_tissue_json': "the target computer's own tissue state",
   'computer_id': 'identifies the computer that logged the target',
   'dive_computer_model': 'identifies the computer that logged the target',

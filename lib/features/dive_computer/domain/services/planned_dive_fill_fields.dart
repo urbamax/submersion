@@ -13,7 +13,7 @@ const Set<String> kMeasuredDiveFields = {
   'profile', 'tanks',
   // deco and exposure the computer reports
   'gradientFactorLow', 'gradientFactorHigh', 'decoAlgorithm',
-  'decoConservatism', 'computerTissue',
+  'decoConservatism', 'computerTissue', 'ppO2Working',
   'diveComputerModel', 'diveComputerSerial', 'diveComputerFirmware',
   // breathing configuration the computer reports
   'diveMode', 'setpointLow', 'setpointHigh', 'setpointDeco', 'scrType',

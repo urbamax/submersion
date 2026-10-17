@@ -133,6 +133,9 @@ class Dive extends Equatable {
   // Tissue state the dive computer itself reported, as imported. Never
   // computed by the app; null when the source carried none.
   final ComputerTissueSnapshot? computerTissue;
+  // The computer's configured working ppO2 ceiling in bar (Suunto Nautic).
+  // Null falls back to the app's ppO2MaxWorking setting.
+  final double? ppO2Working;
   // Dive computer that logged this dive
   final String? diveComputerModel;
   final String? diveComputerSerial;
@@ -286,6 +289,7 @@ class Dive extends Equatable {
     this.decoAlgorithm,
     this.decoConservatism,
     this.computerTissue,
+    this.ppO2Working,
     this.diveComputerModel,
     this.diveComputerSerial,
     this.diveComputerFirmware,
@@ -713,6 +717,7 @@ class Dive extends Equatable {
     String? decoAlgorithm,
     int? decoConservatism,
     ComputerTissueSnapshot? computerTissue,
+    double? ppO2Working,
     String? diveComputerModel,
     String? diveComputerSerial,
     String? diveComputerFirmware,
@@ -819,6 +824,7 @@ class Dive extends Equatable {
       decoAlgorithm: decoAlgorithm ?? this.decoAlgorithm,
       decoConservatism: decoConservatism ?? this.decoConservatism,
       computerTissue: computerTissue ?? this.computerTissue,
+      ppO2Working: ppO2Working ?? this.ppO2Working,
       diveComputerModel: diveComputerModel ?? this.diveComputerModel,
       diveComputerSerial: diveComputerSerial ?? this.diveComputerSerial,
       diveComputerFirmware: diveComputerFirmware ?? this.diveComputerFirmware,
@@ -927,6 +933,7 @@ class Dive extends Equatable {
     decoAlgorithm,
     decoConservatism,
     computerTissue,
+    ppO2Working,
     diveComputerModel,
     diveComputerSerial,
     diveComputerFirmware,

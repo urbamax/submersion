@@ -382,6 +382,7 @@ class DiveMergeBuilder {
       surfacePressure: _firstNonNull(sorted, (d) => d.surfacePressure),
       gradientFactorLow: _firstNonNull(sorted, (d) => d.gradientFactorLow),
       gradientFactorHigh: _firstNonNull(sorted, (d) => d.gradientFactorHigh),
+      ppO2Working: _firstNonNull(sorted, (d) => d.ppO2Working),
       decoAlgorithm: _firstNonNull(sorted, (d) => d.decoAlgorithm),
       decoConservatism: _firstNonNull(sorted, (d) => d.decoConservatism),
       computerTissue: _mergedComputerTissue(sorted),

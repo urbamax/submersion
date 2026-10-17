@@ -194,6 +194,7 @@ void main() {
     int? gfLow = 30,
     int? gfHigh = 70,
     int? decoConservatism,
+    double? ppO2MaxBar,
     int year = 2026,
     int month = 1,
     int day = 15,
@@ -237,6 +238,7 @@ void main() {
       gfLow: gfLow,
       gfHigh: gfHigh,
       decoConservatism: decoConservatism,
+      ppO2MaxBar: ppO2MaxBar,
     );
   }
 
@@ -577,6 +579,41 @@ void main() {
         // Documents current behavior: no errors reported, parser not invoked.
         expect(errors, isEmpty);
         expect(parserCalls, 0);
+      },
+    );
+
+    test(
+      'stores the computer ppO2 ceiling on the dive and its source, and '
+      'keeps the stored dive value when a later parse reports none',
+      () async {
+        await insertDive('dive-1');
+        await insertComputer('comp-1');
+        await insertSource(
+          id: 'src-1',
+          diveId: 'dive-1',
+          computerId: 'comp-1',
+          isPrimary: true,
+        );
+
+        Future<void> reparse(double? ceiling) => service.applyParsedUpdate(
+          diveId: 'dive-1',
+          sourceRowId: 'src-1',
+          parsed: makeParsedDive(ppO2MaxBar: ceiling),
+          descriptorVendor: null,
+          descriptorProduct: null,
+          descriptorModel: null,
+          libdivecomputerVersion: null,
+        );
+
+        await reparse(1.6);
+        expect((await getDive('dive-1')).ppO2Working, 1.6);
+        expect((await getSource('src-1')).ppO2Working, 1.6);
+
+        // A parse that reports nothing never blanks the stored dive ceiling;
+        // the source row still records exactly what that parse said.
+        await reparse(null);
+        expect((await getDive('dive-1')).ppO2Working, 1.6);
+        expect((await getSource('src-1')).ppO2Working, isNull);
       },
     );
 

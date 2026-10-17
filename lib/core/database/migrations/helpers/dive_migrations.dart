@@ -511,6 +511,14 @@ extension DiveMigrations on AppDatabase {
     await _addColumnIfMissing('dives', 'visibility_max_meters', 'REAL');
   }
 
+  /// v291: the computer's configured working ppO2 ceiling, on the dive and on
+  /// the data source that reported it. Idempotent, so the ladder rung and the
+  /// beforeOpen backstop can both call it.
+  Future<void> _assertPpO2WorkingColumns() async {
+    await _addColumnIfMissing('dives', 'pp_o2_working', 'REAL');
+    await _addColumnIfMissing('dive_data_sources', 'pp_o2_working', 'REAL');
+  }
+
   /// v179: site_suggestion_dismissed_at on dives. Null means the site
   /// suggestion (from photo GPS or dive-computer GPS) was never dismissed.
   Future<void> _assertSiteSuggestionDismissedAtColumn() async {

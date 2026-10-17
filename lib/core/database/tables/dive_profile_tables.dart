@@ -117,6 +117,9 @@ class DiveDataSources extends Table {
   TextColumn get decoAlgorithm => text().nullable()();
   IntColumn get gradientFactorLow => integer().nullable()();
   IntColumn get gradientFactorHigh => integer().nullable()();
+  // The computer's configured working ppO2 ceiling in bar, as this source
+  // reported it. Null when the computer does not report one.
+  RealColumn get ppO2Working => real().nullable()();
   DateTimeColumn get importedAt => dateTime()();
   DateTimeColumn get createdAt => dateTime()();
 

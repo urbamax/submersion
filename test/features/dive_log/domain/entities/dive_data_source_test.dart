@@ -157,8 +157,8 @@ void main() {
         createdAt: now,
       );
 
-      // 31 fields total in props list
-      expect(source.props, hasLength(31));
+      // 32 fields total in props list
+      expect(source.props, hasLength(32));
       expect(source.props, contains('r1'));
       expect(source.props, contains('d1'));
       expect(source.props, contains(true));

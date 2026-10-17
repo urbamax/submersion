@@ -274,7 +274,7 @@ class AppDatabase extends _$AppDatabase {
 
   /// The current schema version as a static constant so that pre-open checks
   /// (e.g. version-mismatch guard) can reference it without an instance.
-  static const int currentSchemaVersion = 290;
+  static const int currentSchemaVersion = 291;
 
   /// The oldest schema whose reader can apply this build's sync payloads
   /// without loss or misinterpretation (the compatibility floor).
@@ -1259,6 +1259,10 @@ class AppDatabase extends _$AppDatabase {
     // 277, 282 then 286, as #2613's documents store, #3189, #3012, #3047,
     // #2628, #2650, #2515 and #3324 shipped or claimed earlier rungs.
     290,
+    // v291: dives.pp_o2_working and dive_data_sources.pp_o2_working, the
+    // computer's configured working ppO2 ceiling (Suunto Nautic /Summary).
+    // Additive nullable columns, so the floor stays at 280.
+    291,
   ];
 
   /// Returns the number of migration steps that will execute when upgrading

@@ -53,6 +53,8 @@ const Set<String> kUnmirroredDiveFields = {
   'gradientFactorHigh',
   'decoAlgorithm',
   'decoConservatism',
+  // The ppO2 ceiling the diver's own computer was set to.
+  'ppO2Working',
   // The tissue state the diver's own computer reported (issue #1977).
   'computerTissue',
   'diveComputerModel',

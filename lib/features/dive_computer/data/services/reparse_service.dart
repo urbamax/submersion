@@ -589,6 +589,7 @@ class ReparseService {
         decoAlgorithm: Value(parsed.decoAlgorithm),
         gradientFactorLow: Value(parsed.gfLow),
         gradientFactorHigh: Value(parsed.gfHigh),
+        ppO2Working: Value(parsed.ppO2MaxBar),
         entryLatitude: Value(parsed.entryLatitude),
         entryLongitude: Value(parsed.entryLongitude),
         exitLatitude: Value(parsed.exitLatitude),
@@ -690,6 +691,10 @@ class ReparseService {
         otu: const Value.absent(), // OTU is not directly in ParsedDive
         gradientFactorLow: Value(parsed.gfLow),
         gradientFactorHigh: Value(parsed.gfHigh),
+        // Only overwrite the dive's ceiling when this parse reported one, like
+        // the water temp and GPS fields: the source row above still records
+        // exactly what the computer provided.
+        ppO2Working: Value.absentIfNull(parsed.ppO2MaxBar),
         decoAlgorithm: Value(parsed.decoAlgorithm),
         decoConservatism: Value(parsed.decoConservatism),
         // Only overwrite dive GPS when the computer actually parsed a fix.

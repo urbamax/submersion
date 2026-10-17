@@ -145,6 +145,10 @@ class DownloadedDive {
   /// computed by the app; persisted verbatim on the dive.
   final ComputerTissueSnapshot? computerTissue;
 
+  /// The diver's configured working ppO2 ceiling in bar, as read from the
+  /// computer (Suunto Nautic). Null when the computer does not report it.
+  final double? ppO2Working;
+
   /// Dive events from the computer
   final List<DownloadedEvent> events;
 
@@ -206,6 +210,7 @@ class DownloadedDive {
     this.gfHigh,
     this.decoConservatism,
     this.computerTissue,
+    this.ppO2Working,
     this.diveMode = DiveMode.oc,
     this.events = const [],
     this.rawData,

@@ -94,6 +94,10 @@ class Dives extends Table {
   // Decompression gradient factors
   IntColumn get gradientFactorLow => integer().nullable()(); // 0-100
   IntColumn get gradientFactorHigh => integer().nullable()(); // 0-100
+  // The computer's configured working ppO2 ceiling in bar (Suunto Nautic
+  // /Summary). Null for computers that do not report it, in which case the
+  // app's own ppO2 setting applies.
+  RealColumn get ppO2Working => real().nullable()();
   // Deco model metadata
   TextColumn get decoAlgorithm =>
       text().nullable()(); // "buhlmann", "vpm", "rgbm", "dciem"
